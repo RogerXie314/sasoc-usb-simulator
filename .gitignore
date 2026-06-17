@@ -1,0 +1,38 @@
+# Binaries
+*.exe
+*.exe~
+usb-simulator
+usb-simulator-gui
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# Logs
+logs/
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+nul
+
+# Build output
+/dist/
+/build/
+
+# Go
+vendor/
+
+# Temp
+*.tmp
+*.bak
+..*

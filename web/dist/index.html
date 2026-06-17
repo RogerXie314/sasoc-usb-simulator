@@ -1,0 +1,1883 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>移动介质安检站模拟测试工具</title>
+<link rel="stylesheet" href="https://unpkg.com/element-plus@2.7.3/dist/index.css">
+<link rel="stylesheet" href="https://unpkg.com/@element-plus/icons-vue@2.3.1/dist/index.css">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body,#app{height:100%;font-family:'Microsoft YaHei','PingFang SC',sans-serif}
+:root{--header-bg:#1a1a2e;--sidebar-bg:#16213e;--content-bg:#f0f2f5;--accent:#409eff;--accent-dark:#337ecc}
+
+/* ===== Layout ===== */
+.app-header{height:56px;background:var(--header-bg);display:flex;align-items:center;padding:0 20px;color:#fff;position:fixed;top:0;left:0;right:0;z-index:100;box-shadow:0 2px 8px rgba(0,0,0,.3)}
+.app-header .logo{font-size:20px;font-weight:700;letter-spacing:2px;display:flex;align-items:center;gap:10px}
+.app-header .logo .dot{width:10px;height:10px;border-radius:50%;background:#67c23a;display:inline-block}
+.app-header .header-right{margin-left:auto;display:flex;align-items:center;gap:16px;font-size:13px;color:#aaa}
+.app-header .ws-status{display:flex;align-items:center;gap:6px;font-size:12px}
+.app-header .ws-status .ws-dot{width:8px;height:8px;border-radius:50%;transition:background .3s}
+.app-header .ws-status .ws-dot.connected{background:#67c23a}
+.app-header .ws-status .ws-dot.disconnected{background:#f56c6c}
+.app-header .sasoc-config{display:flex;align-items:center;gap:8px;background:rgba(255,255,255,.12);padding:6px 16px;border-radius:6px;cursor:pointer;transition:background .2s;border:1px solid rgba(255,255,255,.1)}
+.app-header .sasoc-config:hover{background:rgba(255,255,255,.2)}
+.app-header .sasoc-config .sasoc-label{font-size:13px;color:#c0c4cc}
+.app-header .sasoc-config .sasoc-value{font-size:14px;color:#67c23a;font-family:Consolas,monospace;font-weight:600}
+.app-header .sasoc-config .sasoc-value.disconnected{color:#f56c6c}
+.app-header .sasoc-config .sasoc-dot{width:10px;height:10px;border-radius:50%;transition:background .3s;flex-shrink:0}
+.app-header .sasoc-config .sasoc-dot.connected{background:#67c23a;box-shadow:0 0 6px #67c23a}
+.app-header .sasoc-config .sasoc-dot.disconnected{background:#f56c6c;box-shadow:0 0 6px #f56c6c}
+
+.app-body{display:flex;margin-top:56px;height:calc(100vh - 56px)}
+.app-sidebar{width:200px;background:var(--sidebar-bg);color:#bfcbd9;overflow-y:auto;flex-shrink:0;position:fixed;top:56px;bottom:0;left:0;z-index:90}
+.app-sidebar .el-menu{border-right:none!important;background:transparent!important}
+.app-sidebar .el-menu-item,.app-sidebar .el-sub-menu__title{color:#bfcbd9!important;height:48px;line-height:48px}
+.app-sidebar .el-menu-item:hover,.app-sidebar .el-sub-menu__title:hover{background:rgba(255,255,255,.05)!important;color:#fff!important}
+.app-sidebar .el-menu-item.is-active{color:#409eff!important;background:rgba(64,158,255,.1)!important;border-right:3px solid #409eff}
+.app-sidebar .el-menu-item .el-icon{margin-right:8px;font-size:18px}
+
+.app-content{margin-left:200px;flex:1;padding:20px;background:var(--content-bg);overflow-y:auto;min-height:calc(100vh - 56px)}
+
+/* ===== Dashboard ===== */
+.stat-cards{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:20px}
+.stat-card{background:#fff;border-radius:8px;padding:20px;box-shadow:0 2px 12px rgba(0,0,0,.06);position:relative;overflow:hidden}
+.stat-card .stat-icon{position:absolute;right:16px;top:16px;font-size:40px;opacity:.15}
+.stat-card .stat-label{font-size:13px;color:#909399;margin-bottom:8px}
+.stat-card .stat-value{font-size:28px;font-weight:700;color:#303133}
+.stat-card .stat-value.success{color:#67c23a}
+.stat-card .stat-value.warning{color:#e6a23c}
+.stat-card .stat-value.danger{color:#f56c6c}
+
+.event-feed{background:#fff;border-radius:8px;padding:16px;box-shadow:0 2px 12px rgba(0,0,0,.06)}
+.event-feed h3{margin-bottom:12px;font-size:15px;color:#303133}
+.event-item{padding:8px 0;border-bottom:1px solid #f2f3f5;font-size:13px;display:flex;gap:10px;align-items:flex-start}
+.event-item:last-child{border-bottom:none}
+.event-item .ev-time{color:#909399;white-space:nowrap;flex-shrink:0;font-family:Consolas,monospace;font-size:12px}
+.event-item .ev-tag{flex-shrink:0}
+.event-item .ev-msg{color:#606266;word-break:break-all}
+
+/* ===== Tables ===== */
+.page-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+.page-header h2{font-size:18px;color:#303133}
+
+/* ===== Pressure Test ===== */
+.metric-cards{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:20px}
+.metric-card{background:#fff;border-radius:8px;padding:20px;text-align:center;box-shadow:0 2px 12px rgba(0,0,0,.06)}
+.metric-card .metric-label{font-size:13px;color:#909399;margin-bottom:8px}
+.metric-card .metric-value{font-size:24px;font-weight:700;color:#303133}
+.metric-card .metric-value.ok{color:#67c23a}
+.metric-card .metric-value.warn{color:#e6a23c}
+.metric-card .metric-value.err{color:#f56c6c}
+
+.simple-bar{height:20px;background:#ebeef5;border-radius:10px;overflow:hidden;margin-top:8px}
+.simple-bar .fill{height:100%;border-radius:10px;transition:width .6s ease;background:linear-gradient(90deg,#409eff,#67c23a)}
+.simple-bar .fill.warn{background:linear-gradient(90deg,#e6a23c,#f56c6c)}
+
+.progress-section{background:#fff;border-radius:8px;padding:20px;box-shadow:0 2px 12px rgba(0,0,0,.06);margin-bottom:16px}
+.progress-section h3{margin-bottom:12px;font-size:15px;color:#303133}
+
+/* ===== Protocol Debug ===== */
+.hex-output{background:#1e1e1e;color:#d4d4d4;padding:12px;border-radius:4px;font-family:Consolas,'Courier New',monospace;font-size:13px;white-space:pre-wrap;word-break:break-all;max-height:200px;overflow-y:auto;line-height:1.6}
+.header-table{margin-bottom:12px}
+.header-table .ht-row{display:flex;padding:4px 0;border-bottom:1px solid #f2f3f5;font-size:13px}
+.header-table .ht-label{width:120px;color:#909399;flex-shrink:0}
+.header-table .ht-value{color:#303133;font-family:Consolas,monospace}
+
+/* ===== Responsive ===== */
+@media(max-width:768px){
+  .stat-cards,.metric-cards{grid-template-columns:repeat(2,1fr)}
+  .app-sidebar{width:64px}
+  .app-sidebar .el-menu-item span{display:none}
+  .app-content{margin-left:64px}
+}
+@media(max-width:480px){
+  .stat-cards,.metric-cards{grid-template-columns:1fr}
+}
+
+/* ===== Misc ===== */
+.el-table .cell{font-size:13px}
+.el-dialog__body{padding-top:10px!important}
+.fade-enter-active,.fade-leave-active{transition:opacity .2s}
+.fade-enter-from,.fade-leave-to{opacity:0}
+.code-textarea textarea{font-family:Consolas,'Courier New',monospace!important;font-size:13px!important;line-height:1.5!important}
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- Header -->
+  <header class="app-header">
+    <div class="logo">
+      <span class="dot"></span>
+      移动介质安检站模拟测试工具
+    </div>
+    <div class="header-right">
+      <div class="sasoc-config" @click="showSasocDialog" title="点击修改SASOC服务器地址">
+        <span class="sasoc-dot" :class="sasocConnected?'connected':'disconnected'"></span>
+        <span class="sasoc-label">SASOC</span>
+        <span class="sasoc-value" :class="sasocConnected?'':'disconnected'">{{sasocHost}}:{{sasocPort}}</span>
+        <el-icon style="font-size:12px;color:#909399"><Edit /></el-icon>
+      </div>
+      <div class="ws-status">
+        <span class="ws-dot" :class="wsConnected?'connected':'disconnected'"></span>
+        <span>{{wsConnected?'控制台已连接':'控制台已断开'}}</span>
+      </div>
+      <span>{{currentTime}}</span>
+    </div>
+  </header>
+
+  <!-- SASOC Config Dialog -->
+  <el-dialog v-model="sasocDialogVisible" title="SASOC 服务器配置" width="440px" destroy-on-close>
+    <el-form :model="sasocForm" label-width="120px" size="default">
+      <el-form-item label="服务器地址">
+        <el-input v-model="sasocForm.sasocHost" placeholder="如 192.168.1.1" />
+      </el-form-item>
+      <el-form-item label="服务器端口">
+        <el-input-number v-model="sasocForm.sasocPort" :min="1" :max="65535" style="width:100%" />
+      </el-form-item>
+      <el-form-item label="心跳间隔(s)">
+        <el-input-number v-model="sasocForm.heartbeatInterval" :min="5" :max="300" style="width:100%" />
+      </el-form-item>
+      <el-form-item label="加密传输">
+        <el-switch v-model="sasocForm.encrypt" />
+      </el-form-item>
+      <el-form-item label="压缩传输">
+        <el-switch v-model="sasocForm.compress" />
+      </el-form-item>
+      <el-form-item>
+        <el-button type="info" @click="testSasocConnection" :loading="sasocTesting" :icon="sasocTestIcon" :type="sasocTestType" plain>
+          {{sasocTestMsg}}
+        </el-button>
+      </el-form-item>
+    </el-form>
+    <div style="font-size:12px;color:#909399;margin-top:4px">修改后，新创建的安检站将使用新地址；已运行的安检站需重启后生效。</div>
+    <template #footer>
+      <el-button @click="sasocDialogVisible=false">取消</el-button>
+      <el-button type="primary" @click="saveSasocConfig" :loading="sasocSaving">保存</el-button>
+    </template>
+  </el-dialog>
+
+  <!-- Body -->
+  <div class="app-body">
+    <!-- Sidebar -->
+    <aside class="app-sidebar">
+      <el-menu :default-active="currentRoute" @select="handleNav" router>
+        <el-menu-item index="/">
+          <el-icon><Monitor /></el-icon>
+          <span>仪表盘</span>
+        </el-menu-item>
+        <el-menu-item index="/station">
+          <el-icon><OfficeBuilding /></el-icon>
+          <span>安检站管理</span>
+        </el-menu-item>
+        <el-menu-item index="/usb">
+          <el-icon><Usb /></el-icon>
+          <span>U盘模拟</span>
+        </el-menu-item>
+        <el-menu-item index="/debug">
+          <el-icon><Connection /></el-icon>
+          <span>协议调试</span>
+        </el-menu-item>
+        <el-menu-item index="/pressure">
+          <el-icon><DataLine /></el-icon>
+          <span>压力测试</span>
+        </el-menu-item>
+        <el-menu-item index="/log">
+          <el-icon><Document /></el-icon>
+          <span>消息日志</span>
+        </el-menu-item>
+      </el-menu>
+    </aside>
+
+    <!-- Content -->
+    <main class="app-content">
+      <router-view v-slot="{Component}">
+        <transition name="fade" mode="out-in">
+          <component :is="Component" />
+        </transition>
+      </router-view>
+    </main>
+  </div>
+</div>
+
+<script src="https://unpkg.com/vue@3.4.27/dist/vue.global.prod.js"></script>
+<script src="https://unpkg.com/vue-router@4.3.2/dist/vue-router.global.prod.js"></script>
+<script src="https://unpkg.com/element-plus@2.7.3/dist/index.full.js"></script>
+<script src="https://unpkg.com/@element-plus/icons-vue@2.3.1/dist/index.iife.min.js"></script>
+
+<script>
+// ============================================================
+// API Helper
+// ============================================================
+const API_BASE = '/api/v1';
+
+async function api(method, path, body) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body !== undefined) opts.body = JSON.stringify(body);
+  const res = await fetch(API_BASE + path, opts);
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try { const j = await res.json(); msg = j.error || j.message || msg; } catch {}
+    throw new Error(msg);
+  }
+  if (res.status === 204) return null;
+  const j = await res.json();
+  // 后端统一响应格式：{code:0, data: {...}} — 自动提取 data
+  if (j && j.code === 0 && j.data !== undefined) return j.data;
+  return j;
+}
+
+const apiGet    = (p) => api('GET', p);
+const apiPost   = (p, b) => api('POST', p, b);
+const apiPut    = (p, b) => api('PUT', p, b);
+const apiDelete = (p) => api('DELETE', p);
+
+// ============================================================
+// WebSocket Manager
+// ============================================================
+const WS_URL = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/ws';
+
+const wsManager = {
+  _ws: null,
+  _listeners: [],
+  _reconnectTimer: null,
+  connected: false,
+
+  connect() {
+    if (this._ws && (this._ws.readyState === WebSocket.CONNECTING || this._ws.readyState === WebSocket.OPEN)) return;
+    try {
+      this._ws = new WebSocket(WS_URL);
+    } catch (e) {
+      console.error('WebSocket create error', e);
+      this._scheduleReconnect();
+      return;
+    }
+    this._ws.onopen = () => {
+      this.connected = true;
+      this._notify({ type: 'ws_status', status: 'connected' });
+    };
+    this._ws.onclose = () => {
+      this.connected = false;
+      this._notify({ type: 'ws_status', status: 'disconnected' });
+      this._scheduleReconnect();
+    };
+    this._ws.onerror = () => {};
+    this._ws.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        this._notify(data);
+      } catch {}
+    };
+  },
+
+  _scheduleReconnect() {
+    if (this._reconnectTimer) return;
+    this._reconnectTimer = setTimeout(() => {
+      this._reconnectTimer = null;
+      this.connect();
+    }, 3000);
+  },
+
+  send(data) {
+    if (this._ws && this._ws.readyState === WebSocket.OPEN) {
+      this._ws.send(JSON.stringify(data));
+    }
+  },
+
+  onMessage(fn) {
+    this._listeners.push(fn);
+    return () => { this._listeners = this._listeners.filter(f => f !== fn); };
+  },
+
+  _notify(data) {
+    this._listeners.forEach(fn => { try { fn(data); } catch {} });
+  }
+};
+
+// ============================================================
+// CMD ID Map
+// ============================================================
+const CMD_MAP = {
+  100: '心跳',
+  101: '信息上报',
+  102: '设备注册',
+  103: '申领码验证',
+  104: 'U盘领取',
+  105: 'U盘归还',
+  106: '告警上报',
+  107: '操作日志',
+  108: '升级下发',
+  109: '升级结果上报'
+};
+
+// ============================================================
+// Pages
+// ============================================================
+
+// ----- Dashboard -----
+const DashboardPage = {
+  template: `
+    <div>
+      <div class="stat-cards">
+        <div class="stat-card">
+          <div class="stat-label">在线设备数</div>
+          <div class="stat-value success">{{stats.onlineDevices}}</div>
+          <el-icon class="stat-icon"><Monitor /></el-icon>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">U盘总数</div>
+          <div class="stat-value">{{stats.usbCount}}</div>
+          <el-icon class="stat-icon"><Usb /></el-icon>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">今日消息数</div>
+          <div class="stat-value warning">{{stats.todayMessages}}</div>
+          <el-icon class="stat-icon"><ChatDotRound /></el-icon>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">压测状态</div>
+          <div class="stat-value" :class="stats.pressureRunning?'danger':'success'">{{stats.pressureRunning?'运行中':'空闲'}}</div>
+          <el-icon class="stat-icon"><DataLine /></el-icon>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:12px;margin-bottom:20px">
+        <el-button type="primary" @click="goCreate"><el-icon><Plus /></el-icon>创建安检站</el-button>
+        <el-button type="success" @click="goPressure"><el-icon><VideoPlay /></el-icon>启动压测</el-button>
+      </div>
+
+      <div class="event-feed">
+        <h3>实时事件</h3>
+        <div v-if="events.length===0" style="color:#909399;font-size:13px;padding:20px 0;text-align:center">暂无事件</div>
+        <div v-for="ev in events" :key="ev.id" class="event-item">
+          <span class="ev-time">{{ev.time}}</span>
+          <el-tag class="ev-tag" :type="ev.tagType||'info'" size="small">{{ev.tag}}</el-tag>
+          <span class="ev-msg">{{ev.msg}}</span>
+        </div>
+      </div>
+    </div>
+  `,
+  data() {
+    return {
+      stats: { onlineDevices: 0, usbCount: 0, todayMessages: 0, pressureRunning: false },
+      events: [],
+      unsub: null,
+      timer: null
+    };
+  },
+  methods: {
+    goCreate() { this.$router.push('/station'); },
+    goPressure() { this.$router.push('/pressure'); },
+    async loadStats() {
+      try {
+        const [stationsR, usbs] = await Promise.all([apiGet('/stations'), apiGet('/usbs')]);
+        const stationList = (stationsR && stationsR.stations) ? stationsR.stations : (Array.isArray(stationsR) ? stationsR : []);
+        this.stats.onlineDevices = stationList.filter(s => s.status === 'online').length;
+        this.stats.usbCount = (usbs||[]).length;
+      } catch {}
+      try {
+        const r = await apiGet('/pressure/status');
+        this.stats.pressureRunning = r && r.running;
+      } catch {}
+    },
+    addEvent(data) {
+      const now = new Date().toLocaleTimeString();
+      if (data.type === 'ws_status') return;
+      if (data.type === 'station_state_changed') {
+        const p = data.payload || data;
+        const id = p.stationId || p.sn || '';
+        const ns = p.newState || p.status || '';
+        this.events.unshift({ id: Date.now() + Math.random(), time: now, tag: '设备', tagType: 'success', msg: `${id} 状态变更: ${ns}` });
+      } else if (data.type === 'station_status') {
+        this.events.unshift({ id: Date.now() + Math.random(), time: now, tag: '设备', tagType: 'success', msg: `${data.sn} 状态变更: ${data.status}` });
+      } else if (data.type === 'message') {
+        const cmdName = CMD_MAP[data.cmd_id] || `CMD_${data.cmd_id}`;
+        this.events.unshift({ id: Date.now() + Math.random(), time: now, tag: '消息', tagType: 'info', msg: `${data.sn||''} ${cmdName} ${data.direction||''}` });
+        this.stats.todayMessages++;
+      } else if (data.type === 'pressure') {
+        this.events.unshift({ id: Date.now() + Math.random(), time: now, tag: '压测', tagType: 'warning', msg: data.message || JSON.stringify(data) });
+      } else {
+        this.events.unshift({ id: Date.now() + Math.random(), time: now, tag: '事件', tagType: 'info', msg: data.message || JSON.stringify(data) });
+      }
+      if (this.events.length > 100) this.events.length = 100;
+    }
+  },
+  mounted() {
+    this.loadStats();
+    this.timer = setInterval(this.loadStats, 10000);
+    this.unsub = wsManager.onMessage(this.addEvent);
+  },
+  beforeUnmount() {
+    clearInterval(this.timer);
+    if (this.unsub) this.unsub();
+  }
+};
+
+// ----- Station Management -----
+const StationPage = {
+  template: `
+    <div>
+      <div class="page-header">
+        <h2>安检站管理</h2>
+        <div>
+          <el-button type="primary" @click="showBatchDialog"><el-icon><Plus /></el-icon>批量创建</el-button>
+          <el-button type="success" @click="showCreateDialog"><el-icon><Plus /></el-icon>创建安检站</el-button>
+          <el-button @click="loadStations"><el-icon><Refresh /></el-icon>刷新</el-button>
+        </div>
+      </div>
+
+      <el-table :data="stations" stripe border style="width:100%" row-key="sn" v-loading="loading"
+        @expand-change="onExpandChange">
+        <el-table-column type="expand">
+          <template #default="{row}">
+            <div style="padding:12px 20px">
+              <el-descriptions :column="3" size="small" border>
+                <el-descriptions-item label="CPU使用率">
+                  <el-progress :percentage="row.resources?.cpu||0" :stroke-width="14" />
+                </el-descriptions-item>
+                <el-descriptions-item label="内存使用率">
+                  <el-progress :percentage="row.resources?.memory||0" :stroke-width="14" color="#e6a23c" />
+                </el-descriptions-item>
+                <el-descriptions-item label="硬盘使用率">
+                  <el-progress :percentage="row.resources?.disk||0" :stroke-width="14" color="#67c23a" />
+                </el-descriptions-item>
+                <el-descriptions-item label="管控柜状态">
+                  <el-tag :type="row.cabinet?'success':'danger'" size="small">{{row.cabinet?'正常':'未知'}}</el-tag>
+                </el-descriptions-item>
+                <el-descriptions-item label="IP地址">{{row.ip||'-'}}</el-descriptions-item>
+                <el-descriptions-item label="MAC地址">{{row.mac||'-'}}</el-descriptions-item>
+              </el-descriptions>
+              <div style="margin-top:12px">
+                <div style="font-size:13px;color:#909399;margin-bottom:8px;display:flex;align-items:center;gap:8px">
+                  <span>管控柜状态</span>
+                  <span style="font-size:11px;color:#c0c4cc">({{row.cabinet?.totalPorts||24}}口)</span>
+                  <span style="margin-left:auto;display:flex;gap:10px;align-items:center;font-size:11px">
+                    <span style="display:flex;align-items:center;gap:3px"><span style="width:10px;height:10px;border-radius:2px;background:#f0f2f5;border:1px solid #c0c4cc;display:inline-block"></span>空闲</span>
+                    <span style="display:flex;align-items:center;gap:3px"><span style="width:10px;height:10px;border-radius:2px;background:#409eff;display:inline-block"></span>有U盘</span>
+                    <span style="display:flex;align-items:center;gap:3px"><span style="width:10px;height:10px;border-radius:2px;background:#67c23a;display:inline-block"></span>门开</span>
+                    <span style="display:flex;align-items:center;gap:3px"><span style="width:10px;height:10px;border-radius:2px;background:#f56c6c;display:inline-block"></span>故障</span>
+                    <span style="display:flex;align-items:center;gap:3px"><span style="width:10px;height:10px;border-radius:2px;background:#909399;display:inline-block"></span>未知</span>
+                  </span>
+                </div>
+                <div style="display:flex;flex-wrap:wrap;gap:5px">
+                   <div v-for="idx in (row.cabinet?.totalPorts||24)" :key="idx"
+                        :title="slotTooltip(row, idx)"
+                        :style="slotStyle(row, idx)"
+                        @click="slotDetail(row, idx)">
+                     <span style="font-weight:600;line-height:1">{{idx}}</span>
+                     <svg v-if="slotHasUsb(row, idx)" viewBox="0 0 24 24" width="14" height="14" fill="currentColor" style="margin-top:1px">
+                       <path d="M15 7h1a1 1 0 001-1V5a1 1 0 00-1-1h-1v3zm-4 0h1V4H9v2a1 1 0 001 1zm-2 4.5A2.5 2.5 0 009 14h6a2.5 2.5 0 00.5-4.5H9zM7 14v6a2 2 0 002 2h6a2 2 0 002-2v-6h-2v1a1 1 0 01-1 1h-2a1 1 0 01-1-1v-1H7z"/>
+                     </svg>
+                     <svg v-else-if="slotDoorOpen(row, idx)" viewBox="0 0 24 24" width="14" height="14" fill="currentColor" style="margin-top:1px">
+                       <path d="M19 19V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14H3v2h18v-2h-2zM12 7a2 2 0 110 4 2 2 0 010-4z"/>
+                     </svg>
+                     <svg v-else-if="slotDoorStatus(row, idx)===4" viewBox="0 0 24 24" width="14" height="14" fill="currentColor" style="margin-top:1px">
+                       <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+                     </svg>
+                   </div>
+                </div>
+                <div v-if="row.cabinet?.slots && row.cabinet.slots.length" style="margin-top:8px;font-size:12px;color:#606266">
+                  <span style="font-weight:600">已存入U盘：</span>
+                  <span v-for="slot in row.cabinet.slots.filter(s=>s.occupied)" :key="slot.doorNo" style="display:inline-block;margin-right:8px;padding:2px 8px;background:#ecf5ff;border-radius:4px;color:#409eff;font-size:11px;border:1px solid #d9ecff">
+                    [{{slot.doorNo}}] {{slot.sn||'未知'}}
+                  </span>
+                </div>
+              </div>
+              <div style="margin-top:10px;font-size:13px;color:#909399">最近消息：</div>
+              <div v-if="row._recentMsgs && row._recentMsgs.length" style="margin-top:4px">
+                <div v-for="m in row._recentMsgs" :key="m.time" style="font-size:12px;color:#606261;padding:2px 0">
+                  [{{m.time}}] {{CMD_MAP[m.cmd_id]||'CMD_'+m.cmd_id}} {{m.direction}}
+                </div>
+              </div>
+              <div v-else style="font-size:12px;color:#c0c4cc">暂无消息</div>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column prop="sn" label="SN" min-width="160" />
+        <el-table-column prop="name" label="名称" min-width="120" />
+        <el-table-column label="状态" min-width="110">
+          <template #default="{row}">
+            <el-tag :type="statusType(row.status)" size="small" effect="dark">{{statusLabel(row.status)}}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="deviceId" label="DeviceID" min-width="140" show-overflow-tooltip />
+        <el-table-column label="病毒库版本" min-width="160">
+          <template #default="{row}">
+            <span v-if="row.virusLibs && row.virusLibs.length">
+              <span v-for="(lib,i) in row.virusLibs" :key="i" style="margin-right:6px">
+                {{lib.type===1?'A':'B'}}:{{lib.version}}
+              </span>
+            </span>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="SASOC地址" min-width="140">
+          <template #default="{row}">
+            <span style="font-family:Consolas,monospace;font-size:12px">{{row.sasocHost}}:{{row.sasocPort}}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" min-width="320" fixed="right">
+          <template #default="{row}">
+            <el-button-group size="small">
+              <el-button type="success" @click="controlStation(row.sn,'start')" :disabled="row.status==='online'">▶启动</el-button>
+              <el-button type="danger" @click="controlStation(row.sn,'stop')" :disabled="row.status==='idle'">⏹停止</el-button>
+              <el-button type="warning" @click="controlStation(row.sn,'restart')">↻重启</el-button>
+            </el-button-group>
+            <el-dropdown trigger="click" style="margin-left:6px" @command="(cmd)=>sendCommand(row.sn,cmd)">
+              <el-button size="small">指令 ▾</el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="heartbeat">心跳 (CMD100)</el-dropdown-item>
+                  <el-dropdown-item command="info_report">信息上报 (CMD101)</el-dropdown-item>
+                  <el-dropdown-item command="claim_verify">申领码验证 (CMD103)</el-dropdown-item>
+                  <el-dropdown-item command="usb_claim">U盘领取 (CMD104)</el-dropdown-item>
+                  <el-dropdown-item command="usb_return">U盘归还 (CMD105)</el-dropdown-item>
+                  <el-dropdown-item command="alarm">告警上报 (CMD106)</el-dropdown-item>
+                  <el-dropdown-item command="operation_log">操作日志 (CMD107)</el-dropdown-item>
+                  <el-dropdown-item command="trigger_upgrade">升级下发 (CMD108)</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+            <el-button size="small" type="danger" plain style="margin-left:6px" @click="deleteStation(row.sn)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <!-- Create Dialog -->
+      <el-dialog v-model="createVisible" title="创建安检站" width="480px" destroy-on-close>
+        <el-form :model="createForm" label-width="100px" size="default">
+          <el-form-item label="SN" required><el-input v-model="createForm.sn" placeholder="必填，唯一标识" /></el-form-item>
+          <el-form-item label="型号"><el-input v-model="createForm.model" placeholder="SASOC-1000" /></el-form-item>
+          <el-form-item label="版本"><el-input v-model="createForm.version" placeholder="V200R026C01" /></el-form-item>
+          <el-form-item label="名称"><el-input v-model="createForm.name" placeholder="可选，默认使用SN" /></el-form-item>
+          <el-form-item>
+            <el-alert type="info" :closable="false" show-icon>
+              <template #title>
+                <span style="font-size:12px">IP地址和MAC地址将自动递增分配；SASOC地址使用全局配置</span>
+              </template>
+            </el-alert>
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="createVisible=false">取消</el-button>
+          <el-button type="primary" @click="createStation" :loading="creating">创建</el-button>
+        </template>
+      </el-dialog>
+
+      <!-- Batch Create Dialog -->
+      <el-dialog v-model="batchVisible" title="批量创建安检站" width="480px" destroy-on-close>
+        <el-form :model="batchForm" label-width="100px" size="default">
+          <el-form-item label="数量"><el-input-number v-model="batchForm.count" :min="1" :max="100" /></el-form-item>
+          <el-form-item label="型号"><el-input v-model="batchForm.model" placeholder="SASOC-1000" /></el-form-item>
+          <el-form-item label="版本"><el-input v-model="batchForm.version" placeholder="V200R026C01" /></el-form-item>
+          <el-form-item label="前缀"><el-input v-model="batchForm.prefix" placeholder="SN前缀，默认s" /></el-form-item>
+          <el-form-item>
+            <el-alert type="info" :closable="false" show-icon>
+              <template #title>
+                <span style="font-size:12px">IP和MAC地址将自动递增分配；SASOC地址使用全局配置</span>
+              </template>
+            </el-alert>
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="batchVisible=false">取消</el-button>
+          <el-button type="primary" @click="batchCreate" :loading="batching">批量创建</el-button>
+        </template>
+      </el-dialog>
+    </div>
+  `,
+  data() {
+    return {
+      stations: [],
+      loading: false,
+      createVisible: false,
+      batchVisible: false,
+      creating: false,
+      batching: false,
+      createForm: { sn:'', model:'SASOC-1000', version:'V200R026C01', name:'', ip:'', mac:'', sasoc_host:'', sasoc_port:0 },
+      batchForm: { count:10, model:'SASOC-1000', version:'V200R026C01', prefix:'s', sasoc_host:'', sasoc_port:0, auto_start:false },
+      unsub: null,
+      stationMsgs: {},
+      globalSasocHost: '192.168.1.1',
+      globalSasocPort: 4567
+    };
+  },
+  methods: {
+    statusType(s) { return { idle:'info', registering:'warning', online:'success', reconnecting:'danger' }[s] || 'info'; },
+    statusLabel(s) { return { idle:'空闲', registering:'注册中', online:'在线', reconnecting:'重连中' }[s] || s || '未知'; },
+    doorStatusText(s) { return {0:'未知',1:'关闭',2:'开启',3:'开启超时',4:'故障'}[s]||'未知'; },
+    doorStatusColor(s) { return {0:'#909399',1:'#409eff',2:'#67c23a',3:'#e6a23c',4:'#f56c6c'}[s]||'#909399'; },
+    
+    // Slot helpers
+    slotDoorStatus(row, idx) {
+      const ds = row.cabinet?.doorStatus;
+      if (!ds || idx-1 >= ds.length) return 0;
+      return ds[idx-1] || 0;
+    },
+    slotDoorOpen(row, idx) {
+      const s = this.slotDoorStatus(row, idx);
+      return s === 2 || s === 3; // 开启 or 开启超时
+    },
+    slotHasUsb(row, idx) {
+      const slots = row.cabinet?.slots;
+      if (!slots || idx-1 >= slots.length) return false;
+      return slots[idx-1]?.occupied || false;
+    },
+    slotUsbSN(row, idx) {
+      const slots = row.cabinet?.slots;
+      if (!slots || idx-1 >= slots.length) return '';
+      return slots[idx-1]?.sn || '';
+    },
+    slotStyle(row, idx) {
+      const ds = this.slotDoorStatus(row, idx);
+      const hasUsb = this.slotHasUsb(row, idx);
+      let bg = '#f0f2f5';     // 空闲 - 浅灰
+      let border = '#c0c4cc';
+      let color = '#606266';
+      
+      if (ds === 4) {           // 故障 - 红色
+        bg = '#fef0f0';
+        border = '#f56c6c';
+        color = '#f56c6c';
+      } else if (ds === 2 || ds === 3) { // 门开 - 绿色
+        bg = '#f0f9eb';
+        border = '#67c23a';
+        color = '#67c23a';
+      } else if (hasUsb) {      // 有U盘 - 蓝色
+        bg = '#ecf5ff';
+        border = '#409eff';
+        color = '#409eff';
+      } else if (ds === 0) {    // 未知 - 灰色
+        bg = '#f4f4f5';
+        border = '#909399';
+        color = '#909399';
+      }
+      
+      return {
+        width: '34px', height: '38px', borderRadius: '5px',
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+        fontSize: '11px', color: color, background: bg, border: `2px solid ${border}`,
+        cursor: 'pointer', transition: 'all .2s', userSelect: 'none',
+        boxShadow: ds === 4 ? '0 0 4px rgba(245,108,108,0.4)' : 'none'
+      };
+    },
+    slotTooltip(row, idx) {
+      const ds = this.slotDoorStatus(row, idx);
+      const hasUsb = this.slotHasUsb(row, idx);
+      const sn = this.slotUsbSN(row, idx);
+      const doorText = {0:'未知',1:'关闭',2:'开启',3:'开启超时',4:'故障'}[ds] || '未知';
+      let tip = `柜门 ${idx}：${doorText}`;
+      if (hasUsb) tip += `\n已存入U盘：${sn || '未知SN'}`;
+      else tip += '\n无U盘';
+      return tip;
+    },
+    slotDetail(row, idx) {
+      const ds = this.slotDoorStatus(row, idx);
+      const hasUsb = this.slotHasUsb(row, idx);
+      const sn = this.slotUsbSN(row, idx);
+      const doorText = {0:'未知',1:'关闭',2:'开启',3:'开启超时',4:'故障'}[ds] || '未知';
+      ElementPlus.ElMessage.info(`柜门 ${idx}：${doorText}${hasUsb ? '，已存入U盘：' + sn : ''}`);
+    },
+    async loadStations() {
+      this.loading = true;
+      try {
+        const r = await apiGet('/stations');
+        if (r && r.stations) {
+          this.stations = r.stations;
+        } else if (Array.isArray(r)) {
+          this.stations = r;
+        } else {
+          this.stations = [];
+        }
+      } catch (e) { ElementPlus.ElMessage.error('加载失败: ' + e.message); }
+      finally { this.loading = false; }
+    },
+    async loadGlobalConfig() {
+      try {
+        const r = await apiGet('/config');
+        if (r) {
+          this.globalSasocHost = r.sasocHost || '192.168.1.1';
+          this.globalSasocPort = r.sasocPort || 4567;
+        }
+      } catch {}
+    },
+    showCreateDialog() {
+      this.createForm = { sn:'', model:'SASOC-1000', version:'V200R026C01', name:'', ip:'', mac:'', sasoc_host:this.globalSasocHost, sasoc_port:this.globalSasocPort };
+      this.createVisible = true;
+    },
+    showBatchDialog() {
+      this.batchForm = { count:10, model:'SASOC-1000', version:'V200R026C01', sasoc_host:this.globalSasocHost, sasoc_port:this.globalSasocPort, auto_start:false };
+      this.batchVisible = true;
+    },
+    async createStation() {
+      this.creating = true;
+      try {
+        await apiPost('/stations', this.createForm);
+        ElementPlus.ElMessage.success('创建成功');
+        this.createVisible = false;
+        this.loadStations();
+      } catch (e) { ElementPlus.ElMessage.error('创建失败: ' + e.message); }
+      finally { this.creating = false; }
+    },
+    async batchCreate() {
+      this.batching = true;
+      try {
+        await apiPost('/stations/batch', this.batchForm);
+        ElementPlus.ElMessage.success('批量创建已提交');
+        this.batchVisible = false;
+        this.loadStations();
+      } catch (e) { ElementPlus.ElMessage.error('批量创建失败: ' + e.message); }
+      finally { this.batching = false; }
+    },
+    async controlStation(sn, action) {
+      try {
+        await apiPost(`/stations/${sn}/${action}`);
+        ElementPlus.ElMessage.success(`${action} 指令已发送`);
+        setTimeout(this.loadStations, 1000);
+        // 注册过程可能需要数秒，额外延迟刷新
+        if (action === 'start') {
+          setTimeout(this.loadStations, 5000);
+        }
+      } catch (e) { ElementPlus.ElMessage.error('操作失败: ' + e.message); }
+    },
+    async sendCommand(sn, cmd) {
+      let params = {};
+      // 带参数的命令需要弹窗输入
+      if (cmd === 'claim_verify') {
+        try {
+          const { value } = await ElementPlus.ElMessageBox.prompt('请输入6位申领码', '申领码验证', { inputPattern: /^[A-Za-z0-9]{1,6}$/, inputErrorMessage: '申领码格式不正确' });
+          params = { applyCode: value };
+        } catch { return; }
+      } else if (cmd === 'usb_claim') {
+        try {
+          const { value: code } = await ElementPlus.ElMessageBox.prompt('请输入申领码', 'U盘领取', { inputPattern: /.+/, inputErrorMessage: '申领码不能为空' });
+          const { value: usbSn } = await ElementPlus.ElMessageBox.prompt('请输入U盘SN', 'U盘领取', { inputPattern: /.+/, inputErrorMessage: 'SN不能为空' });
+          params = { applyCode: code, sn: usbSn, result: 'success' };
+        } catch { return; }
+      } else if (cmd === 'usb_return') {
+        try {
+          const { value } = await ElementPlus.ElMessageBox.prompt('请输入归还U盘的SN', 'U盘归还', { inputPattern: /.+/, inputErrorMessage: 'SN不能为空' });
+          params = { sn: value };
+        } catch { return; }
+      } else if (cmd === 'alarm') {
+        try {
+          const alarmTypes = ['USB_ILLEGAL_ACCESS','CPU_ABNORMAL','MEMORY_ABNORMAL','DISK_ABNORMAL','DEVICE_FAULT','MALWARE_DETECTED'];
+          const { value: alarmType } = await ElementPlus.ElMessageBox.prompt('告警类型: ' + alarmTypes.join(' / '), '告警上报', { inputPattern: /.+/, inputErrorMessage: '告警类型不能为空' });
+          params = { alarmType };
+          if (alarmType === 'MALWARE_DETECTED') {
+            const { value: vn } = await ElementPlus.ElMessageBox.prompt('病毒名称', '告警详情');
+            const { value: vt } = await ElementPlus.ElMessageBox.prompt('病毒类型', '告警详情');
+            params.virusName = vn; params.virusType = vt; params.fileName = 'unknown'; params.fileHash = '0000';
+          }
+        } catch { return; }
+      } else if (cmd === 'operation_log') {
+        try {
+          const ops = ['insert','remove','scan','kill','copy'];
+          const { value: op } = await ElementPlus.ElMessageBox.prompt('操作类型: ' + ops.join(' / '), '操作日志', { inputPattern: /.+/, inputErrorMessage: '操作类型不能为空' });
+          const { value: logSn } = await ElementPlus.ElMessageBox.prompt('U盘SN', '操作日志', { inputPattern: /.+/, inputErrorMessage: 'SN不能为空' });
+          params = { operation: op, sn: logSn, result: 'success' };
+        } catch { return; }
+      } else if (cmd === 'trigger_upgrade') {
+        try {
+          const { value: vt } = await ElementPlus.ElMessageBox.prompt('病毒库类型 (1=A / 2=B)', '升级下发', { inputPattern: /^[12]$/, inputErrorMessage: '请输入1或2' });
+          const { value: ver } = await ElementPlus.ElMessageBox.prompt('新版本号', '升级下发', { inputPattern: /.+/, inputErrorMessage: '版本号不能为空' });
+          params = { virusType: parseInt(vt), version: ver, downloadUrl: 'http://update.local/virus_'+vt+'_'+ver+'.pak', checksum: 'md5:0000000000000000' };
+        } catch { return; }
+      }
+      try {
+        await apiPost(`/stations/${sn}/command`, { command: cmd, params });
+        ElementPlus.ElMessage.success(`${cmd} 指令已发送`);
+      } catch (e) { ElementPlus.ElMessage.error('发送失败: ' + e.message); }
+    },
+    async deleteStation(sn) {
+      try {
+        await ElementPlus.ElMessageBox.confirm(`确定删除安检站 ${sn}?`, '确认', { type: 'warning' });
+        await apiDelete(`/stations/${sn}`);
+        ElementPlus.ElMessage.success('已删除');
+        this.loadStations();
+      } catch {}
+    },
+    onExpandChange(row, expandedRows) {
+      if (expandedRows.includes(row)) {
+        row._recentMsgs = this.stationMsgs[row.sn] || [];
+      }
+    },
+    handleWs(data) {
+      // 处理后端 station_state_changed 事件
+      if (data.type === 'station_state_changed') {
+        const p = data.payload || data;
+        // payload 结构: {stationId, oldState, newState, deviceId}
+        const stationId = p.stationId || p.sn;
+        const newState = p.newState || p.status;
+        if (stationId && newState) {
+          const s = this.stations.find(x => x.stationId === stationId || x.sn === stationId);
+          if (s) { s.status = newState; }
+        }
+      }
+      // 兼容旧格式 station_status
+      if (data.type === 'station_status') {
+        const s = this.stations.find(x => x.sn === data.sn);
+        if (s) { s.status = data.status; }
+      }
+      if (data.type === 'message' && data.sn) {
+        const now = new Date().toLocaleTimeString();
+        const entry = { time: now, cmd_id: data.cmd_id, direction: data.direction || '' };
+        if (!this.stationMsgs[data.sn]) this.stationMsgs[data.sn] = [];
+        this.stationMsgs[data.sn].unshift(entry);
+        if (this.stationMsgs[data.sn].length > 20) this.stationMsgs[data.sn].length = 20;
+      }
+    }
+  },
+  mounted() {
+    this.loadStations();
+    this.loadGlobalConfig();
+    this.unsub = wsManager.onMessage(this.handleWs);
+    // 定时轮询兜底：每15秒刷新一次站点状态，确保 WebSocket 事件丢失时也能更新
+    this._pollTimer = setInterval(() => { this.loadStations(); }, 15000);
+  },
+  beforeUnmount() { if (this.unsub) this.unsub(); if (this._pollTimer) clearInterval(this._pollTimer); }
+};
+
+// ----- USB Plugin -----
+const USBPage = {
+  template: `
+    <div>
+      <div class="page-header">
+        <h2>U盘模拟</h2>
+        <div>
+          <el-button type="primary" @click="showBatchCreate"><el-icon><Plus /></el-icon>批量创建</el-button>
+          <el-button type="success" @click="showCreateUSB"><el-icon><Plus /></el-icon>创建U盘</el-button>
+          <el-button @click="loadUSBs"><el-icon><Refresh /></el-icon>刷新</el-button>
+        </div>
+      </div>
+
+      <el-table :data="usbs" stripe border style="width:100%" v-loading="loading">
+        <el-table-column prop="sn" label="SN" min-width="160" />
+        <el-table-column prop="model" label="型号" min-width="100" />
+        <el-table-column label="生命周期" min-width="100">
+          <template #default="{row}">
+            <el-tag :type="usbStatusType(row.statusCode||row.status)" size="small" effect="dark">{{usbStatusCN(row.statusCode||row.status)}}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="合格标记" min-width="80">
+          <template #default="{row}">
+            <el-tag :type="row.qualified?'success':'danger'" size="small">{{row.qualified?'合格':'不合格'}}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="areaName" label="区域" min-width="100" />
+        <el-table-column label="所属安检站" min-width="120">
+          <template #default="{row}">
+            <span v-if="row.stationId">{{getStationName(row.stationId)}}</span>
+            <span v-else style="color:#c0c4cc">-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="柜门号" min-width="70">
+          <template #default="{row}">
+            <span v-if="row.doorNo">{{row.doorNo}}</span>
+            <span v-else style="color:#c0c4cc">-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="插入" min-width="70">
+          <template #default="{row}">
+            <el-tag :type="row.inserted?'success':'info'" size="small">{{row.inserted?'已插入':'未插入'}}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" min-width="340" fixed="right">
+          <template #default="{row}">
+            <el-button-group size="small">
+              <el-button :type="row.inserted?'warning':'success'" @click="toggleInsert(row)">{{row.inserted?'拔出':'插入'}}</el-button>
+              <el-button @click="openClaimVerify(row)" :disabled="(row.statusCode||row.status)!=='received'||!row.inserted">申领</el-button>
+              <el-button @click="openReturnDialog(row)" :disabled="(row.statusCode||row.status)!=='issued'||!row.inserted">归还</el-button>
+            </el-button-group>
+            <el-dropdown trigger="click" style="margin-left:4px" @command="(cmd)=>handleUsbCmd(row,cmd)">
+              <el-button size="small">更多 ▾</el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="read">读取数据</el-dropdown-item>
+                  <el-dropdown-item command="write">写入数据</el-dropdown-item>
+                  <el-dropdown-item command="scrap" :disabled="(row.statusCode||row.status)==='scrapped'">报废</el-dropdown-item>
+                  <el-dropdown-item command="fault">故障注入</el-dropdown-item>
+                  <el-dropdown-item command="delete" divided>删除</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <!-- Claim Verify Dialog (申领码验证 + 领取) -->
+      <el-dialog v-model="claimDialogVisible" title="申领码验证 & U盘领取" width="520px" destroy-on-close>
+        <el-steps :active="claimStep" align-center style="margin-bottom:20px">
+          <el-step title="验证申领码" />
+          <el-step title="领取U盘" />
+        </el-steps>
+        <div v-if="claimStep===0">
+          <el-form label-width="100px">
+            <el-form-item label="U盘SN"><el-input :model-value="claimTarget" disabled /></el-form-item>
+            <el-form-item label="申领码"><el-input v-model="claimForm.applyCode" placeholder="6位申领码" maxlength="6" /></el-form-item>
+          </el-form>
+        </div>
+        <div v-if="claimStep===1">
+          <el-alert type="success" title="申领码验证通过" :closable="false" style="margin-bottom:12px" />
+          <el-descriptions :column="1" size="small" border>
+            <el-descriptions-item label="申领人">{{claimInfo.applicantName}}</el-descriptions-item>
+            <el-descriptions-item label="工号">{{claimInfo.applicantNo}}</el-descriptions-item>
+            <el-descriptions-item label="使用时段">{{formatTime(claimInfo.startTime)}} ~ {{formatTime(claimInfo.endTime)}}</el-descriptions-item>
+            <el-descriptions-item label="授权区域">{{(claimInfo.areaCodes||[]).join(', ')}}</el-descriptions-item>
+          </el-descriptions>
+        </div>
+        <template #footer>
+          <el-button @click="claimDialogVisible=false">取消</el-button>
+          <el-button v-if="claimStep===0" type="primary" @click="doClaimVerify" :loading="claimLoading">验证</el-button>
+          <el-button v-if="claimStep===1" type="success" @click="doClaimUsb" :loading="claimLoading">确认领取</el-button>
+        </template>
+      </el-dialog>
+
+      <!-- Return USB Dialog -->
+      <el-dialog v-model="returnDialogVisible" title="U盘归还" width="420px" destroy-on-close>
+        <el-form label-width="80px">
+          <el-form-item label="U盘SN"><el-input :model-value="returnTarget" disabled /></el-form-item>
+          <el-form-item label="操作"><span>将U盘归还至管控柜，状态变更为"已收录"</span></el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="returnDialogVisible=false">取消</el-button>
+          <el-button type="primary" @click="doReturnUsb" :loading="returnLoading">确认归还</el-button>
+        </template>
+      </el-dialog>
+
+      <!-- Read Result Dialog -->
+      <el-dialog v-model="readVisible" title="U盘数据" width="520px">
+        <pre style="background:#f5f7fa;padding:12px;border-radius:4px;font-size:13px;max-height:400px;overflow:auto">{{readResult}}</pre>
+        <template #footer><el-button @click="readVisible=false">关闭</el-button></template>
+      </el-dialog>
+
+      <!-- Write Dialog -->
+      <el-dialog v-model="writeVisible" title="写入U盘数据" width="520px">
+        <el-form label-width="80px">
+          <el-form-item label="U盘SN"><el-input :model-value="writeTarget" disabled /></el-form-item>
+          <el-form-item label="合格标记"><el-switch v-model="writeForm.qualified" /></el-form-item>
+          <el-form-item label="区域名称"><el-input v-model="writeForm.areaName" /></el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="writeVisible=false">取消</el-button>
+          <el-button type="primary" @click="doWrite">写入</el-button>
+        </template>
+      </el-dialog>
+
+      <!-- Fault Injection Dialog -->
+      <el-dialog v-model="faultVisible" title="故障注入" width="480px" destroy-on-close>
+        <el-form :model="faultForm" label-width="100px" size="default">
+          <el-form-item label="U盘SN"><el-input :model-value="faultTarget" disabled /></el-form-item>
+          <el-form-item label="写入延迟(ms)"><el-input-number v-model="faultForm.writeDelay" :min="0" :max="60000" /></el-form-item>
+          <el-form-item label="读取延迟(ms)"><el-input-number v-model="faultForm.readDelay" :min="0" :max="60000" /></el-form-item>
+          <el-form-item label="写入失败"><el-switch v-model="faultForm.writeFail" /></el-form-item>
+          <el-form-item label="读取失败"><el-switch v-model="faultForm.readFail" /></el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="faultVisible=false">取消</el-button>
+          <el-button type="primary" @click="applyFault">应用</el-button>
+        </template>
+      </el-dialog>
+
+      <!-- Create USB Dialog -->
+      <el-dialog v-model="createUSBVisible" title="创建U盘" width="480px" destroy-on-close>
+        <el-form :model="usbForm" label-width="100px">
+          <el-form-item label="SN"><el-input v-model="usbForm.sn" placeholder="留空自动生成" /></el-form-item>
+          <el-form-item label="型号"><el-input v-model="usbForm.model" /></el-form-item>
+          <el-form-item label="固件版本"><el-input v-model="usbForm.firmwareVersion" /></el-form-item>
+          <el-form-item label="合格标记"><el-switch v-model="usbForm.qualified" /></el-form-item>
+          <el-form-item label="区域名称"><el-input v-model="usbForm.areaName" /></el-form-item>
+          <el-form-item label="所属安检站">
+            <el-select v-model="usbForm.stationId" placeholder="选择安检站" clearable filterable style="width:100%">
+              <el-option v-for="s in stations" :key="s.stationId" :label="s.name||s.sn" :value="s.stationId" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="柜门号"><el-input-number v-model="usbForm.doorNo" :min="1" :max="24" /></el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="createUSBVisible=false">取消</el-button>
+          <el-button type="primary" @click="createUSB">创建</el-button>
+        </template>
+      </el-dialog>
+
+      <!-- Batch Create USB Dialog -->
+      <el-dialog v-model="batchCreateVisible" title="批量创建U盘" width="480px" destroy-on-close>
+        <el-form :model="batchForm" label-width="100px">
+          <el-form-item label="数量"><el-input-number v-model="batchForm.count" :min="1" :max="1000" /></el-form-item>
+          <el-form-item label="SN前缀"><el-input v-model="batchForm.prefix" placeholder="默认USB" /></el-form-item>
+          <el-form-item label="型号"><el-input v-model="batchForm.model" /></el-form-item>
+          <el-form-item label="区域名称"><el-input v-model="batchForm.areaName" /></el-form-item>
+          <el-form-item label="所属安检站">
+            <el-select v-model="batchForm.stationId" placeholder="选择安检站" clearable filterable style="width:100%">
+              <el-option v-for="s in stations" :key="s.stationId" :label="s.name||s.sn" :value="s.stationId" />
+            </el-select>
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="batchCreateVisible=false">取消</el-button>
+          <el-button type="primary" @click="doBatchCreate" :loading="batchCreating">创建</el-button>
+        </template>
+      </el-dialog>
+    </div>
+  `,
+  data() {
+    return {
+      usbs: [],
+      stations: [],
+      loading: false,
+      // Claim flow
+      claimDialogVisible: false,
+      claimStep: 0,
+      claimTarget: '',
+      claimForm: { applyCode: '' },
+      claimInfo: {},
+      claimLoading: false,
+      // Return
+      returnDialogVisible: false,
+      returnTarget: '',
+      returnLoading: false,
+      // Read/Write
+      readVisible: false,
+      readResult: '',
+      writeVisible: false,
+      writeTarget: '',
+      writeForm: { qualified: true, areaName: '' },
+      // Fault
+      faultVisible: false,
+      faultTarget: '',
+      faultForm: { writeDelay: 0, readDelay: 0, writeFail: false, readFail: false },
+      // Create
+      createUSBVisible: false,
+      usbForm: { sn:'', model:'USB-100', firmwareVersion:'1.0.0', qualified:true, areaName:'默认区域', stationId:'', doorNo:1 },
+      // Batch create
+      batchCreateVisible: false,
+      batchCreating: false,
+      batchForm: { count:10, prefix:'USB', model:'USB-100', areaName:'默认区域', stationId:'' },
+    };
+  },
+  methods: {
+    usbStatusType(s) { return {'已录入':'info','已寄出':'warning','已收录':'','已发放':'success','已报废':'danger','registered':'info','sent':'warning','received':'','issued':'success','scrapped':'danger'}[s]||'info'; },
+    usbStatusCN(s) { return {'registered':'已录入','sent':'已寄出','received':'已收录','issued':'已发放','scrapped':'已报废'}[s]||s; },
+    getStationName(stationId) {
+      const s = this.stations.find(x => x.stationId === stationId || x.sn === stationId);
+      return s ? (s.name || s.sn) : stationId;
+    },
+    formatTime(ts) {
+      if (!ts) return '-';
+      return new Date(ts).toLocaleString('zh-CN');
+    },
+    async loadUSBs() {
+      this.loading = true;
+      try {
+        const r = await apiGet('/usbs');
+        this.usbs = (r && r.usbs) || [];
+      } catch (e) { ElementPlus.ElMessage.error('加载失败: ' + e.message); }
+      finally { this.loading = false; }
+    },
+    async loadStations() {
+      try {
+        const r = await apiGet('/stations');
+        if (r && r.stations) { this.stations = r.stations; }
+        else if (Array.isArray(r)) { this.stations = r; }
+      } catch {}
+    },
+    async toggleInsert(usb) {
+      try {
+        if (usb.inserted) {
+          await apiPost(`/usbs/${usb.sn}/remove`);
+          ElementPlus.ElMessage.success('已拔出');
+        } else {
+          await apiPost(`/usbs/${usb.sn}/insert`, { station_sn: usb.stationId || '', doorNo: usb.doorNo || 0 });
+          ElementPlus.ElMessage.success('已插入');
+        }
+        this.loadUSBs();
+      } catch (e) { ElementPlus.ElMessage.error('操作失败: ' + e.message); }
+    },
+    // ---- 申领码验证 + 领取流程 ----
+    openClaimVerify(usb) {
+      this.claimTarget = usb.sn;
+      this.claimStep = 0;
+      this.claimForm = { applyCode: '' };
+      this.claimInfo = {};
+      this.claimDialogVisible = true;
+    },
+    async doClaimVerify() {
+      if (!this.claimForm.applyCode) { ElementPlus.ElMessage.warning('请输入申领码'); return; }
+      this.claimLoading = true;
+      try {
+        // 找到U盘所属的在线安检站
+        const usb = this.usbs.find(u => u.sn === this.claimTarget);
+        if (!usb || !usb.stationId) { ElementPlus.ElMessage.error('U盘未关联安检站'); this.claimLoading = false; return; }
+        const station = this.stations.find(s => s.stationId === usb.stationId);
+        if (!station || station.status !== 'online') { ElementPlus.ElMessage.error('安检站不在线，无法验证'); this.claimLoading = false; return; }
+        // 发送申领码验证命令
+        await apiPost(`/stations/${station.sn}/command`, {
+          command: 'claim_verify',
+          params: { applyCode: this.claimForm.applyCode }
+        });
+        // 模拟SASOC响应成功（实际由SASOC返回）
+        this.claimInfo = {
+          applicantName: '模拟申领人',
+          applicantNo: 'EMP-' + Math.floor(Math.random()*10000),
+          startTime: Date.now(),
+          endTime: Date.now() + 86400000,
+          areaCodes: ['默认区域']
+        };
+        this.claimStep = 1;
+        ElementPlus.ElMessage.success('申领码验证通过');
+      } catch (e) { ElementPlus.ElMessage.error('验证失败: ' + e.message); }
+      finally { this.claimLoading = false; }
+    },
+    async doClaimUsb() {
+      this.claimLoading = true;
+      try {
+        const usb = this.usbs.find(u => u.sn === this.claimTarget);
+        if (!usb || !usb.stationId) { ElementPlus.ElMessage.error('U盘未关联安检站'); this.claimLoading = false; return; }
+        const station = this.stations.find(s => s.stationId === usb.stationId);
+        // 1. 发送领取上报命令
+        if (station && station.status === 'online') {
+          await apiPost(`/stations/${station.sn}/command`, {
+            command: 'usb_claim',
+            params: { applyCode: this.claimForm.applyCode, sn: this.claimTarget, result: 'success' }
+          });
+        }
+        // 2. 更新U盘生命周期状态为已发放
+        await apiPost(`/usbs/${this.claimTarget}/status`, { status: 'issued' });
+        ElementPlus.ElMessage.success('U盘领取成功');
+        this.claimDialogVisible = false;
+        this.loadUSBs();
+      } catch (e) { ElementPlus.ElMessage.error('领取失败: ' + e.message); }
+      finally { this.claimLoading = false; }
+    },
+    // ---- 归还流程 ----
+    openReturnDialog(usb) {
+      this.returnTarget = usb.sn;
+      this.returnDialogVisible = true;
+    },
+    async doReturnUsb() {
+      this.returnLoading = true;
+      try {
+        const usb = this.usbs.find(u => u.sn === this.returnTarget);
+        const station = usb && usb.stationId ? this.stations.find(s => s.stationId === usb.stationId) : null;
+        // 1. 发送归还上报命令
+        if (station && station.status === 'online') {
+          await apiPost(`/stations/${station.sn}/command`, {
+            command: 'usb_return',
+            params: { sn: this.returnTarget }
+          });
+        }
+        // 2. 更新U盘生命周期状态为已收录
+        await apiPost(`/usbs/${this.returnTarget}/status`, { status: 'received' });
+        ElementPlus.ElMessage.success('U盘归还成功');
+        this.returnDialogVisible = false;
+        this.loadUSBs();
+      } catch (e) { ElementPlus.ElMessage.error('归还失败: ' + e.message); }
+      finally { this.returnLoading = false; }
+    },
+    // ---- 其他操作 ----
+    handleUsbCmd(usb, cmd) {
+      switch (cmd) {
+        case 'read': this.openReadDialog(usb); break;
+        case 'write': this.openWriteDialog(usb); break;
+        case 'scrap': this.scrapUsb(usb); break;
+        case 'fault': this.openFaultDialog(usb); break;
+        case 'delete': this.deleteUSB(usb.sn); break;
+      }
+    },
+    openReadDialog(usb) {
+      this.readResult = '加载中...';
+      this.readVisible = true;
+      apiGet(`/usbs/${usb.sn}/data`).then(d => { this.readResult = JSON.stringify(d, null, 2); }).catch(e => { this.readResult = '读取失败: ' + e.message; });
+    },
+    openWriteDialog(usb) {
+      this.writeTarget = usb.sn;
+      this.writeForm = { qualified: usb.qualified !== false, areaName: usb.areaName || '' };
+      this.writeVisible = true;
+    },
+    async doWrite() {
+      try {
+        await apiPost(`/usbs/${this.writeTarget}/write`, this.writeForm);
+        ElementPlus.ElMessage.success('写入成功');
+        this.writeVisible = false;
+        this.loadUSBs();
+      } catch (e) { ElementPlus.ElMessage.error('写入失败: ' + e.message); }
+    },
+    async scrapUsb(usb) {
+      try {
+        await ElementPlus.ElMessageBox.confirm(`确定报废U盘 ${usb.sn}?`, '确认', { type: 'warning' });
+        await apiPost(`/usbs/${usb.sn}/status`, { status: 'scrapped' });
+        ElementPlus.ElMessage.success('已报废');
+        this.loadUSBs();
+      } catch {}
+    },
+    openFaultDialog(usb) {
+      this.faultTarget = usb.sn;
+      this.faultForm = { writeDelay: usb.writeDelay||0, readDelay: usb.readDelay||0, writeFail: usb.writeFail||false, readFail: usb.readFail||false };
+      this.faultVisible = true;
+    },
+    async applyFault() {
+      try {
+        await apiPost('/usbs/fault-injection', { sn: this.faultTarget, ...this.faultForm });
+        ElementPlus.ElMessage.success('故障配置已应用');
+        this.faultVisible = false;
+        this.loadUSBs();
+      } catch (e) { ElementPlus.ElMessage.error('应用失败: ' + e.message); }
+    },
+    async deleteUSB(sn) {
+      try {
+        await ElementPlus.ElMessageBox.confirm(`确定删除U盘 ${sn}?`, '确认', { type: 'warning' });
+        await apiDelete(`/usbs/${sn}`);
+        ElementPlus.ElMessage.success('已删除');
+        this.loadUSBs();
+      } catch {}
+    },
+    showCreateUSB() {
+      this.usbForm = { sn:'', model:'USB-100', firmwareVersion:'1.0.0', qualified:true, areaName:'默认区域', stationId:'', doorNo:1 };
+      this.createUSBVisible = true;
+    },
+    async createUSB() {
+      try {
+        await apiPost('/usbs', this.usbForm);
+        ElementPlus.ElMessage.success('创建成功');
+        this.createUSBVisible = false;
+        this.loadUSBs();
+      } catch (e) { ElementPlus.ElMessage.error('创建失败: ' + e.message); }
+    },
+    showBatchCreate() {
+      this.batchForm = { count:10, prefix:'USB', model:'USB-100', areaName:'默认区域', stationId:'' };
+      this.batchCreateVisible = true;
+    },
+    async doBatchCreate() {
+      this.batchCreating = true;
+      try {
+        const r = await apiPost('/usbs/batch', this.batchForm);
+        ElementPlus.ElMessage.success(`批量创建完成: ${r.success||0}/${r.total||0} 成功`);
+        this.batchCreateVisible = false;
+        this.loadUSBs();
+      } catch (e) { ElementPlus.ElMessage.error('批量创建失败: ' + e.message); }
+      finally { this.batchCreating = false; }
+    }
+  },
+  mounted() {
+    this.loadUSBs();
+    this.loadStations();
+  }
+};
+
+// ----- Protocol Debug -----
+const DebugPage = {
+  template: `
+    <div>
+      <div class="page-header"><h2>协议调试</h2></div>
+
+      <el-card style="margin-bottom:20px">
+        <el-form :model="debugForm" label-width="100px" size="default">
+          <el-form-item label="目标安检站">
+            <el-select v-model="debugForm.station_sn" placeholder="选择安检站" filterable style="width:300px">
+              <el-option v-for="s in stations" :key="s.sn" :label="s.sn + (s.name?' ('+s.name+')':'')" :value="s.sn" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="命令类型">
+            <el-select v-model="debugForm.cmd_id" placeholder="选择CMD" style="width:300px">
+              <el-option v-for="(v,k) in CMD_MAP" :key="k" :label="k + ' - ' + v" :value="Number(k)" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="消息体">
+            <el-input v-model="debugForm.body" type="textarea" :rows="8" class="code-textarea"
+              placeholder='JSON格式, 例: {"sn":"xxx","status":"online"}' />
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" @click="encode">编码 (Encode)</el-button>
+            <el-button type="success" @click="decode">解码 (Decode)</el-button>
+            <el-button type="warning" @click="sendMsg">发送 (Send)</el-button>
+          </el-form-item>
+        </el-form>
+      </el-card>
+
+      <!-- Hex Output -->
+      <el-card v-if="hexOutput" header="编码输出 (Hex)" style="margin-bottom:20px">
+        <div class="hex-output">{{hexOutput}}</div>
+      </el-card>
+
+      <!-- Decode Output -->
+      <el-card v-if="decodeResult" header="解码结果" style="margin-bottom:20px">
+        <div class="header-table">
+          <div class="ht-row"><span class="ht-label">Magic</span><span class="ht-value">{{decodeResult.magic}}</span></div>
+          <div class="ht-row"><span class="ht-label">Version</span><span class="ht-value">{{decodeResult.version}}</span></div>
+          <div class="ht-row"><span class="ht-label">CmdID</span><span class="ht-value">{{decodeResult.cmd_id}} ({{CMD_MAP[decodeResult.cmd_id]||'未知'}})</span></div>
+          <div class="ht-row"><span class="ht-label">BodyLen</span><span class="ht-value">{{decodeResult.body_length}}</span></div>
+          <div class="ht-row"><span class="ht-label">Seq</span><span class="ht-value">{{decodeResult.seq}}</span></div>
+        </div>
+        <div style="margin-top:8px">
+          <div style="font-size:13px;color:#909399;margin-bottom:4px">Body:</div>
+          <pre style="background:#f5f7fa;padding:12px;border-radius:4px;font-size:13px;max-height:300px;overflow:auto">{{decodeResult.body}}</pre>
+        </div>
+      </el-card>
+
+      <!-- Send Response -->
+      <el-card v-if="sendResponse" header="发送响应">
+        <pre style="background:#f5f7fa;padding:12px;border-radius:4px;font-size:13px;max-height:300px;overflow:auto">{{sendResponse}}</pre>
+      </el-card>
+
+      <!-- Decode Input Dialog -->
+      <el-dialog v-model="decodeDialogVisible" title="粘贴Hex数据解码" width="600px">
+        <el-input v-model="decodeHexInput" type="textarea" :rows="6" class="code-textarea" placeholder="粘贴Hex字符串..." />
+        <template #footer>
+          <el-button @click="decodeDialogVisible=false">取消</el-button>
+          <el-button type="primary" @click="doDecode">解码</el-button>
+        </template>
+      </el-dialog>
+    </div>
+  `,
+  data() {
+    return {
+      stations: [],
+      debugForm: { station_sn:'', cmd_id:100, body:'{}' },
+      hexOutput: '',
+      decodeResult: null,
+      sendResponse: '',
+      decodeDialogVisible: false,
+      decodeHexInput: '',
+      CMD_MAP
+    };
+  },
+  methods: {
+    async loadStations() {
+      try {
+        const r = await apiGet('/stations');
+        if (r && r.stations) {
+          this.stations = r.stations;
+        } else if (Array.isArray(r)) {
+          this.stations = r;
+        }
+      } catch {}
+    },
+    async encode() {
+      try {
+        const body = JSON.parse(this.debugForm.body);
+        const r = await apiPost('/debug/encode', { cmd_id: this.debugForm.cmd_id, body });
+        this.hexOutput = r.hex || JSON.stringify(r, null, 2);
+        this.decodeResult = null;
+      } catch (e) { ElementPlus.ElMessage.error('编码失败: ' + (e instanceof SyntaxError ? 'JSON格式错误' : e.message)); }
+    },
+    decode() {
+      this.decodeDialogVisible = true;
+      this.decodeHexInput = '';
+    },
+    async doDecode() {
+      try {
+        const r = await apiPost('/debug/decode', { hex: this.decodeHexInput });
+        this.decodeResult = r;
+        this.decodeDialogVisible = false;
+        this.hexOutput = '';
+        if (typeof r.body === 'object') {
+          this.decodeResult.body = JSON.stringify(r.body, null, 2);
+        }
+      } catch (e) { ElementPlus.ElMessage.error('解码失败: ' + e.message); }
+    },
+    async sendMsg() {
+      if (!this.debugForm.station_sn) { ElementPlus.ElMessage.warning('请选择目标安检站'); return; }
+      try {
+        const body = JSON.parse(this.debugForm.body);
+        const r = await apiPost('/debug/send', { station_sn: this.debugForm.station_sn, cmd_id: this.debugForm.cmd_id, body });
+        this.sendResponse = JSON.stringify(r, null, 2);
+      } catch (e) { ElementPlus.ElMessage.error('发送失败: ' + (e instanceof SyntaxError ? 'JSON格式错误' : e.message)); }
+    }
+  },
+  mounted() { this.loadStations(); }
+};
+
+// ----- Pressure Test -----
+const PressurePage = {
+  template: `
+    <div>
+      <div class="page-header"><h2>压力测试</h2></div>
+
+      <el-card style="margin-bottom:20px">
+        <el-form :model="config" label-width="120px" size="default" inline>
+          <el-form-item label="设备数量"><el-input-number v-model="config.stationCount" :min="1" :max="1000" /></el-form-item>
+          <el-form-item label="SASOC地址"><el-input v-model="config.sasocHost" style="width:150px" /></el-form-item>
+          <el-form-item label="SASOC端口"><el-input-number v-model="config.sasocPort" :min="1" :max="65535" /></el-form-item>
+          <el-form-item label="心跳开关"><el-switch v-model="config.heartbeatEnabled" /></el-form-item>
+          <el-form-item label="持续时间(s)"><el-input-number v-model="config.durationSeconds" :min="10" :max="86400" /></el-form-item>
+          <el-form-item>
+            <el-button type="success" @click="startTest" :loading="starting" :disabled="running">启动压测</el-button>
+            <el-button type="danger" @click="stopTest" :disabled="!running">停止压测</el-button>
+          </el-form-item>
+        </el-form>
+      </el-card>
+
+      <!-- Metrics -->
+      <div class="metric-cards">
+        <div class="metric-card">
+          <div class="metric-label">在线设备</div>
+          <div class="metric-value" :class="metrics.onlineDevices>0?'ok':''">{{metrics.onlineDevices}}</div>
+          <div class="simple-bar"><div class="fill" :style="{width: barPercent(metrics.onlineDevices, config.stationCount)+'%'}"></div></div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">注册成功率</div>
+          <div class="metric-value" :class="metrics.registerRate>=90?'ok':metrics.registerRate>=50?'warn':'err'">{{metrics.registerRate}}%</div>
+          <div class="simple-bar"><div class="fill" :class="metrics.registerRate<50?'warn':''" :style="{width: metrics.registerRate+'%'}"></div></div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">心跳成功率</div>
+          <div class="metric-value" :class="metrics.heartbeatRate>=90?'ok':metrics.heartbeatRate>=50?'warn':'err'">{{metrics.heartbeatRate}}%</div>
+          <div class="simple-bar"><div class="fill" :class="metrics.heartbeatRate<50?'warn':''" :style="{width: metrics.heartbeatRate+'%'}"></div></div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">平均延迟</div>
+          <div class="metric-value" :class="metrics.avgLatency<100?'ok':metrics.avgLatency<500?'warn':'err'">{{metrics.avgLatency}}ms</div>
+        </div>
+      </div>
+
+      <!-- Progress -->
+      <div v-if="running" class="progress-section">
+        <h3>压测进行中...</h3>
+        <el-progress :percentage="progress" :stroke-width="20" :format="() => progress + '%'" />
+        <div style="margin-top:8px;font-size:13px;color:#909399">已运行 {{elapsed}}s / 共 {{config.durationSeconds}}s</div>
+      </div>
+
+      <!-- Report -->
+      <el-card v-if="report" header="压测报告" style="margin-top:20px">
+        <el-descriptions :column="2" border>
+          <el-descriptions-item label="总设备数">{{report.totalStations}}</el-descriptions-item>
+          <el-descriptions-item label="成功注册">{{report.registeredStations}}</el-descriptions-item>
+          <el-descriptions-item label="注册成功率">{{report.registerRate}}%</el-descriptions-item>
+          <el-descriptions-item label="心跳成功率">{{report.heartbeatRate}}%</el-descriptions-item>
+          <el-descriptions-item label="平均延迟">{{report.avgLatency}}ms</el-descriptions-item>
+          <el-descriptions-item label="总消息数">{{report.totalMessages}}</el-descriptions-item>
+          <el-descriptions-item label="错误数">{{report.errorCount}}</el-descriptions-item>
+          <el-descriptions-item label="持续时间">{{report.duration}}s</el-descriptions-item>
+        </el-descriptions>
+      </el-card>
+    </div>
+  `,
+  data() {
+    return {
+      config: { stationCount:10, sasocHost:'192.168.1.1', sasocPort:4567, heartbeatEnabled:true, durationSeconds:60 },
+      running: false,
+      starting: false,
+      metrics: { onlineDevices:0, registerRate:0, heartbeatRate:0, avgLatency:0 },
+      progress: 0,
+      elapsed: 0,
+      report: null,
+      unsub: null,
+      pollTimer: null
+    };
+  },
+  methods: {
+    barPercent(v, total) { return total > 0 ? Math.min(100, Math.round(v / total * 100)) : 0; },
+    async startTest() {
+      this.starting = true;
+      try {
+        await apiPost('/pressure/start', this.config);
+        this.running = true;
+        this.report = null;
+        this.progress = 0;
+        this.elapsed = 0;
+        this.startPolling();
+      } catch (e) { ElementPlus.ElMessage.error('启动失败: ' + e.message); }
+      finally { this.starting = false; }
+    },
+    async stopTest() {
+      try {
+        await apiPost('/pressure/stop');
+        this.running = false;
+        this.stopPolling();
+        this.loadStatus();
+      } catch (e) { ElementPlus.ElMessage.error('停止失败: ' + e.message); }
+    },
+    startPolling() {
+      this.stopPolling();
+      this.pollTimer = setInterval(() => {
+        this.loadStatus();
+        if (this.running) {
+          this.elapsed++;
+          this.progress = Math.min(100, Math.round(this.elapsed / this.config.durationSeconds * 100));
+        }
+      }, 1000);
+    },
+    stopPolling() {
+      if (this.pollTimer) { clearInterval(this.pollTimer); this.pollTimer = null; }
+    },
+    async loadStatus() {
+      try {
+        const r = await apiGet('/pressure/status');
+        if (r) {
+          this.running = r.running;
+          this.metrics = {
+            onlineDevices: r.online_devices || 0,
+            registerRate: Math.round((r.register_rate || 0) * 100) / 100,
+            heartbeatRate: Math.round((r.heartbeat_rate || 0) * 100) / 100,
+            avgLatency: Math.round((r.avg_latency || 0) * 100) / 100
+          };
+          if (!r.running && this.running) {
+            this.running = false;
+            this.progress = 100;
+            this.stopPolling();
+          }
+          if (r.report) { this.report = r.report; }
+        }
+      } catch {}
+    },
+    handleWs(data) {
+      if (data.type === 'pressure') {
+        if (data.running !== undefined) this.running = data.running;
+        if (data.metrics) {
+          this.metrics = {
+            onlineDevices: data.metrics.online_devices || this.metrics.onlineDevices,
+            registerRate: Math.round((data.metrics.register_rate || 0) * 100) / 100,
+            heartbeatRate: Math.round((data.metrics.heartbeat_rate || 0) * 100) / 100,
+            avgLatency: Math.round((data.metrics.avg_latency || 0) * 100) / 100
+          };
+        }
+        if (data.report) { this.report = data.report; }
+        if (!data.running && this.running) {
+          this.running = false;
+          this.stopPolling();
+        }
+      }
+    }
+  },
+  mounted() {
+    this.loadStatus();
+    this.unsub = wsManager.onMessage(this.handleWs);
+    // 加载全局 SASOC 配置作为默认值
+    apiGet('/config').then(r => {
+      if (r) {
+        this.config.sasocHost = r.sasocHost || this.config.sasocHost;
+        this.config.sasocPort = r.sasocPort || this.config.sasocPort;
+      }
+    }).catch(() => {});
+  },
+  beforeUnmount() {
+    this.stopPolling();
+    if (this.unsub) this.unsub();
+  }
+};
+
+// ----- Message Log -----
+const LogPage = {
+  template: `
+    <div>
+      <div class="page-header">
+        <h2>消息日志</h2>
+        <div>
+          <el-button @click="loadLogs"><el-icon><Refresh /></el-icon>刷新</el-button>
+          <el-button type="danger" @click="clearLogs">清空日志</el-button>
+        </div>
+      </div>
+
+      <el-form :inline="true" size="default" style="margin-bottom:16px">
+        <el-form-item label="安检站">
+          <el-input v-model="filters.station" placeholder="SN过滤" clearable style="width:180px" />
+        </el-form-item>
+        <el-form-item label="命令">
+          <el-select v-model="filters.cmdId" placeholder="全部" clearable style="width:160px">
+            <el-option v-for="(v,k) in CMD_MAP" :key="k" :label="k+' - '+v" :value="Number(k)" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="方向">
+          <el-select v-model="filters.direction" placeholder="全部" clearable style="width:120px">
+            <el-option label="发送" value="send" />
+            <el-option label="接收" value="recv" />
+          </el-select>
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" @click="loadLogs">查询</el-button>
+        </el-form-item>
+      </el-form>
+
+      <el-table :data="filteredLogs" stripe border style="width:100%" v-loading="loading" max-height="600">
+        <el-table-column prop="time" label="时间" min-width="180" />
+        <el-table-column prop="station_sn" label="安检站" min-width="160" show-overflow-tooltip />
+        <el-table-column label="命令" min-width="120">
+          <template #default="{row}">{{CMD_MAP[row.cmd_id]||('CMD_'+row.cmd_id)}}</template>
+        </el-table-column>
+        <el-table-column label="方向" min-width="80">
+          <template #default="{row}">
+            <el-tag :type="row.direction==='send'?'':'success'" size="small">{{row.direction==='send'?'发送':'接收'}}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="80" fixed="right">
+          <template #default="{row}">
+            <el-button size="small" link type="primary" @click="showDetail(row)">详情</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <div style="margin-top:12px;text-align:right">
+        <el-pagination v-model:current-page="page" :page-size="pageSize" :total="totalLogs"
+          layout="total, prev, pager, next" @current-change="loadLogs" />
+      </div>
+
+      <!-- Detail Dialog -->
+      <el-dialog v-model="detailVisible" title="消息详情" width="600px">
+        <pre style="background:#f5f7fa;padding:12px;border-radius:4px;font-size:13px;max-height:500px;overflow:auto">{{detailData}}</pre>
+        <template #footer><el-button @click="detailVisible=false">关闭</el-button></template>
+      </el-dialog>
+    </div>
+  `,
+  data() {
+    return {
+      logs: [],
+      loading: false,
+      filters: { station: '', cmdId: null, direction: '' },
+      page: 1,
+      pageSize: 50,
+      totalLogs: 0,
+      detailVisible: false,
+      detailData: '',
+      CMD_MAP,
+      unsub: null
+    };
+  },
+  computed: {
+    filteredLogs() { return this.logs; }
+  },
+  methods: {
+    async loadLogs() {
+      this.loading = true;
+      try {
+        const params = new URLSearchParams();
+        params.set('page', this.page);
+        params.set('page_size', this.pageSize);
+        if (this.filters.station) params.set('station_sn', this.filters.station);
+        if (this.filters.cmdId) params.set('cmd_id', this.filters.cmdId);
+        if (this.filters.direction) params.set('direction', this.filters.direction);
+        const r = await apiGet('/logs?' + params.toString());
+        this.logs = r.logs || r || [];
+        this.totalLogs = r.total || this.logs.length;
+      } catch (e) { ElementPlus.ElMessage.error('加载失败: ' + e.message); }
+      finally { this.loading = false; }
+    },
+    async clearLogs() {
+      try {
+        await ElementPlus.ElMessageBox.confirm('确定清空所有日志？此操作不可恢复。', '确认', { type:'warning' });
+        await apiDelete('/logs');
+        this.logs = [];
+        ElementPlus.ElMessage.success('已清空');
+      } catch {}
+    },
+    showDetail(row) {
+      this.detailData = JSON.stringify(row, null, 2);
+      this.detailVisible = true;
+    },
+    handleWs(data) {
+      if (data.type === 'message') {
+        this.logs.unshift({
+          time: new Date().toLocaleString(),
+          station_sn: data.sn || '',
+          cmd_id: data.cmd_id,
+          direction: data.direction || 'recv',
+          raw: data
+        });
+        if (this.logs.length > 500) this.logs.length = 500;
+        this.totalLogs++;
+      }
+    }
+  },
+  mounted() {
+    this.loadLogs();
+    this.unsub = wsManager.onMessage(this.handleWs);
+  },
+  beforeUnmount() { if (this.unsub) this.unsub(); }
+};
+
+// ============================================================
+// Router & App
+// ============================================================
+const { createApp, ref, onMounted, onBeforeUnmount, computed } = Vue;
+const { createRouter, createWebHashHistory } = VueRouter;
+
+const routes = [
+  { path: '/', component: DashboardPage },
+  { path: '/station', component: StationPage },
+  { path: '/usb', component: USBPage },
+  { path: '/debug', component: DebugPage },
+  { path: '/pressure', component: PressurePage },
+  { path: '/log', component: LogPage },
+  { path: '/:pathMatch(.*)*', redirect: '/' }
+];
+
+const router = createRouter({
+  history: createWebHashHistory(),
+  routes
+});
+
+  const app = createApp({
+  setup() {
+    const wsConnected = ref(false);
+    const currentTime = ref('');
+    const currentRoute = computed(() => router.currentRoute.value.path);
+
+    // SASOC 配置状态 - 先定义 ref，再从 localStorage 恢复
+    const sasocHost = ref('192.168.1.1');
+    const sasocPort = ref(4567);
+    const sasocConnected = ref(false);
+    const sasocDialogVisible = ref(false);
+    const sasocSaving = ref(false);
+    const sasocForm = ref({
+      sasocHost: '192.168.1.1',
+      sasocPort: 4567,
+      heartbeatInterval: 30,
+      encrypt: true,
+      compress: true,
+    });
+    const sasocTesting = ref(false);
+    const sasocTestMsg = ref('测试连接');
+    const sasocTestType = ref('info');
+    const sasocTestIcon = ref('Connection');
+
+    // 初始化：优先从 localStorage 读取（保留用户上次修改）
+    const savedHost = localStorage.getItem('sasocHost');
+    const savedPort = localStorage.getItem('sasocPort');
+    if (savedHost) sasocHost.value = savedHost;
+    if (savedPort) sasocPort.value = parseInt(savedPort);
+
+    function updateTime() {
+      const d = new Date();
+      currentTime.value = d.toLocaleDateString('zh-CN') + ' ' + d.toLocaleTimeString('zh-CN');
+    }
+
+    function handleNav(index) {
+      router.push(index);
+    }
+
+    async function loadSasocConfig() {
+      try {
+        const r = await apiGet('/config');
+        if (r) {
+          // 只有当后端值与当前值不同时才更新，保留用户修改
+          const currentHost = localStorage.getItem('sasocHost') || sasocHost.value;
+          const currentPort = localStorage.getItem('sasocPort') || sasocPort.value;
+          if (r.sasocHost && r.sasocHost !== currentHost) {
+            sasocHost.value = r.sasocHost;
+          }
+          if (r.sasocPort && r.sasocPort !== parseInt(currentPort)) {
+            sasocPort.value = r.sasocPort;
+          }
+          // 同步到 localStorage
+          localStorage.setItem('sasocHost', sasocHost.value);
+          localStorage.setItem('sasocPort', String(sasocPort.value));
+        }
+      } catch {}
+    }
+
+    async function checkSasocStatus() {
+      try {
+        const r = await apiGet('/config/sasoc-status');
+        sasocConnected.value = r && r.connected;
+      } catch {
+        sasocConnected.value = false;
+      }
+    }
+
+    function showSasocDialog() {
+      sasocForm.value = {
+        sasocHost: sasocHost.value,
+        sasocPort: sasocPort.value,
+        heartbeatInterval: 30,
+        encrypt: true,
+        compress: true,
+      };
+      // 同时从后端拉取完整配置
+      apiGet('/config').then(r => {
+        if (r) {
+          sasocForm.value.sasocHost = r.sasocHost || sasocForm.value.sasocHost;
+          sasocForm.value.sasocPort = r.sasocPort || sasocForm.value.sasocPort;
+          if (r.simulator) {
+            sasocForm.value.heartbeatInterval = r.simulator.heartbeatInterval || 30;
+            sasocForm.value.encrypt = r.simulator.encrypt !== undefined ? r.simulator.encrypt : true;
+            sasocForm.value.compress = r.simulator.compress !== undefined ? r.simulator.compress : true;
+          }
+        }
+      }).catch(() => {});
+      sasocDialogVisible.value = true;
+    }
+
+    async function saveSasocConfig() {
+      sasocSaving.value = true;
+      try {
+        await apiPut('/config', sasocForm.value);
+        sasocHost.value = sasocForm.value.sasocHost;
+        sasocPort.value = sasocForm.value.sasocPort;
+        localStorage.setItem('sasocHost', sasocHost.value);
+        localStorage.setItem('sasocPort', String(sasocPort.value));
+        sasocDialogVisible.value = false;
+        ElementPlus.ElMessage.success('SASOC 配置已保存');
+      } catch (e) {
+        ElementPlus.ElMessage.error('保存失败: ' + e.message);
+      } finally {
+        sasocSaving.value = false;
+      }
+    }
+
+    async function testSasocConnection() {
+      sasocTesting.value = true;
+      sasocTestMsg.value = '测试中...';
+      sasocTestType.value = 'info';
+      try {
+        const r = await apiGet('/config/sasoc-status');
+        if (r && r.connected) {
+          sasocTestType.value = 'success';
+          sasocTestMsg.value = '连接成功';
+          sasocTestIcon.value = 'Check';
+          ElementPlus.ElMessage.success('SASOC 平台连接测试成功');
+        } else {
+          sasocTestType.value = 'danger';
+          sasocTestMsg.value = '连接失败';
+          sasocTestIcon.value = 'Close';
+          ElementPlus.ElMessage.error('SASOC 平台连接失败: ' + (r && r.error ? r.error : '无法连接'));
+        }
+      } catch (e) {
+        sasocTestType.value = 'danger';
+        sasocTestMsg.value = '测试失败';
+        sasocTestIcon.value = 'Close';
+        ElementPlus.ElMessage.error('连接测试异常: ' + e.message);
+      } finally {
+        sasocTesting.value = false;
+      }
+    }
+
+    const unsubWs = wsManager.onMessage((data) => {
+      if (data.type === 'ws_status') {
+        wsConnected.value = data.status === 'connected';
+      }
+    });
+
+    onMounted(() => {
+      wsManager.connect();
+      updateTime();
+      setInterval(updateTime, 1000);
+      loadSasocConfig();
+      checkSasocStatus();
+      setInterval(checkSasocStatus, 10000);
+    });
+
+    onBeforeUnmount(() => {
+      unsubWs();
+    });
+
+    return {
+      wsConnected, currentTime, currentRoute, handleNav,
+      sasocHost, sasocPort, sasocConnected, sasocDialogVisible, sasocSaving, sasocForm,
+      sasocTesting, sasocTestMsg, sasocTestType, sasocTestIcon,
+      showSasocDialog, saveSasocConfig, testSasocConnection,
+    };
+  }
+});
+
+// Register Element Plus
+app.use(ElementPlus);
+
+// Register icons
+for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
+  app.component(key, component);
+}
+
+app.use(router);
+app.mount('#app');
+</script>
+</body>
+</html>

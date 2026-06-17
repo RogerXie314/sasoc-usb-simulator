@@ -1,0 +1,19 @@
+database:
+    path: usb-simulator.db
+pressure:
+    collect_interval: 5
+    report_format: html
+sasoc:
+    host: 192.168.60.162
+    port: 4567
+server:
+    debug: true
+    port: 8080
+simulator:
+    compress: true
+    encrypt: true
+    heartbeat_interval: 30
+    max_stations: 100
+    offline_timeout: 100
+    read_timeout: 600
+    reconnect_interval: 60

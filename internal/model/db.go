@@ -114,8 +114,18 @@ CREATE INDEX IF NOT EXISTS idx_sim_usb_inserted      ON sim_usb(inserted);
 CREATE INDEX IF NOT EXISTS idx_message_log_station   ON message_log(station_id);
 CREATE INDEX IF NOT EXISTS idx_message_log_cmdid     ON message_log(cmdid);
 CREATE INDEX IF NOT EXISTS idx_message_log_created   ON message_log(created_at);
+CREATE TABLE IF NOT EXISTS cabinet_slot_status (
+    station_id   TEXT    NOT NULL,
+    door_no      INTEGER NOT NULL DEFAULT 0,
+    status       INTEGER NOT NULL DEFAULT 1,  -- 0=未知,1=关闭,2=开启,3=开启超时,4=故障
+    reason       TEXT    NOT NULL DEFAULT '', -- 故障原因描述
+    updated_at   DATETIME NOT NULL DEFAULT (datetime('now','localtime')),
+    PRIMARY KEY (station_id, door_no)
+);
+
 CREATE INDEX IF NOT EXISTS idx_pressure_test_status  ON pressure_test(status);
 CREATE INDEX IF NOT EXISTS idx_pressure_metric_test  ON pressure_metric(test_id);
+CREATE INDEX IF NOT EXISTS idx_cabinet_slot_station ON cabinet_slot_status(station_id);
 `
 	if _, err := db.Exec(schema); err != nil {
 		return fmt.Errorf("exec schema: %w", err)

@@ -92,6 +92,17 @@ func SetupRouter(h *hub.Hub, cfg *config.Config) *gin.Engine {
 		// 前端: POST /usbs/fault-injection  →  故障注入
 		v1.POST("/usbs/fault-injection", usbHandler.updateUsbFault)
 
+		// ---- 管控柜故障注入 ----
+		cabinetHandler := newCabinetHandler(h)
+		// 单槽故障注入
+		v1.POST("/cabinet/:stationId/fault", cabinetHandler.injectSlotFault)
+		// 批量故障注入（整柜或指定门号列表）
+		v1.POST("/cabinet/:stationId/fault-batch", cabinetHandler.injectBatchFault)
+		// 恢复（单槽或整柜）
+		v1.POST("/cabinet/:stationId/restore", cabinetHandler.restoreSlot)
+		// 查询全部插槽状态
+		v1.GET("/cabinet/:stationId/slots", cabinetHandler.listSlots)
+
 		// 旧路径兼容（保留）
 		usbPlug := v1.Group("/usb-plug")
 		{

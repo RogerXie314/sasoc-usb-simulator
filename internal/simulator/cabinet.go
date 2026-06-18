@@ -10,9 +10,11 @@ type Cabinet struct {
 
 // CabinetSlot 柜内插槽
 type CabinetSlot struct {
-	DoorNo   int    `json:"doorNo"`
-	SN       string `json:"sn,omitempty"` // 对齐协议 §7.3 slots[].sn
-	Occupied bool   `json:"occupied"`
+	DoorNo      int    `json:"doorNo"`
+	SN          string `json:"sn,omitempty"` // 对齐协议 §7.3 slots[].sn
+	Occupied    bool   `json:"occupied"`
+	Fault       bool   `json:"fault"`       // 是否故障
+	FaultReason string `json:"faultReason"` // 故障原因描述
 }
 
 // NewCabinet 创建管控柜
@@ -71,6 +73,44 @@ func (c *Cabinet) GetUsbList() []CabinetSlot {
 		}
 	}
 	return result
+}
+
+// SetSlotFault 设置插槽故障状态（doorNo 从 1 开始）
+func (c *Cabinet) SetSlotFault(doorNo int, fault bool, reason string) bool {
+	idx := doorNo - 1
+	if idx < 0 || idx >= c.TotalPorts {
+		return false
+	}
+	c.Slots[idx].Fault = fault
+	c.Slots[idx].FaultReason = reason
+	if fault {
+		c.DoorStatus[idx] = 4 // 故障
+	} else {
+		c.DoorStatus[idx] = 1 // 恢复为关闭
+	}
+	return true
+}
+
+// SetAllSlotsFault 设置全部插槽故障状态
+func (c *Cabinet) SetAllSlotsFault(fault bool, reason string) {
+	for i := 0; i < c.TotalPorts; i++ {
+		c.Slots[i].Fault = fault
+		c.Slots[i].FaultReason = reason
+		if fault {
+			c.DoorStatus[i] = 4
+		} else {
+			c.DoorStatus[i] = 1
+		}
+	}
+}
+
+// GetSlotStatus 获取单个插槽状态
+func (c *Cabinet) GetSlotStatus(doorNo int) (CabinetSlot, bool) {
+	idx := doorNo - 1
+	if idx < 0 || idx >= c.TotalPorts {
+		return CabinetSlot{}, false
+	}
+	return c.Slots[idx], true
 }
 
 // ToReportMap 转换为信息上报格式（对齐协议 §7.3 cabinet）

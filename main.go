@@ -160,6 +160,21 @@ func main() {
 		}
 	}
 
+	// 从数据库恢复已有U盘设备
+	if err := h.RestoreUsbs(); err != nil {
+		logger.Warn("failed to restore USB devices from DB", zap.Error(err))
+	} else {
+		usbCount := h.UsbDeviceCount()
+		if usbCount > 0 {
+			logger.Info("USB devices restored from DB", zap.Int("count", usbCount))
+		}
+	}
+
+	// 从数据库恢复管控柜插槽故障状态
+	if err := h.RestoreCabinetSlotStatuses(); err != nil {
+		logger.Warn("failed to restore cabinet slot statuses from DB", zap.Error(err))
+	}
+
 	// 控制台模式显示启动信息
 	url := fmt.Sprintf("http://localhost:%d", cfg.Server.Port)
 	if hasConsole {

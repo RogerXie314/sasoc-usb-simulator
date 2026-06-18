@@ -326,6 +326,10 @@ func (h *Hub) RestoreStations() error {
 		s.OnStateChange = func(stationID string, oldState, newState string, deviceID uint32) {
 			h.NotifyStationStateChange(stationID, oldState, newState, deviceID)
 		}
+		// 注入消息接收回调
+		s.OnMessageReceived = func(stationID string, cmdID uint32, body string, latencyMs int) {
+			h.NotifyMessageReceived(stationID, cmdID, body, latencyMs)
+		}
 
 		h.stations[row.ID] = s
 		h.logger.Info("station restored from DB",
@@ -349,6 +353,10 @@ func (h *Hub) AddStation(s *simulator.SimStation) error {
 	// 注入状态变更回调，使 station 内部状态变更能通知前端
 	s.OnStateChange = func(stationID string, oldState, newState string, deviceID uint32) {
 		h.NotifyStationStateChange(stationID, oldState, newState, deviceID)
+	}
+	// 注入消息接收回调，使 station 收到应答时记录消息日志
+	s.OnMessageReceived = func(stationID string, cmdID uint32, body string, latencyMs int) {
+		h.NotifyMessageReceived(stationID, cmdID, body, latencyMs)
 	}
 
 	h.stations[s.ID] = s
@@ -472,9 +480,133 @@ func (h *Hub) StationCount() int {
 	return len(h.stations)
 }
 
-// --- USB 设备管理 ---
+// btoi bool转int
+func btoi(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
 
-// AddUsbDevice 添加 U 盘设备
+// --- 管控柜故障注入 ---
+
+// InjectCabinetSlotFault 对指定站点的指定插槽注入/恢复故障
+func (h *Hub) InjectCabinetSlotFault(stationID string, doorNo int, fault bool, reason string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	s, ok := h.stations[stationID]
+	if !ok {
+		return fmt.Errorf("station %s not found", stationID)
+	}
+
+	if !s.SetCabinetSlotFault(doorNo, fault, reason) {
+		return fmt.Errorf("invalid doorNo %d for station %s", doorNo, stationID)
+	}
+
+	// 持久化到数据库
+	if h.db != nil {
+		status := 4 // 故障
+		if !fault {
+			status = 1 // 关闭
+		}
+		if err := model.UpsertCabinetSlotStatus(h.db, &model.CabinetSlotStatus{
+			StationID: stationID,
+			DoorNo:    doorNo,
+			Status:    status,
+			Reason:    reason,
+		}); err != nil {
+			h.logger.Warn("failed to persist cabinet slot status",
+				zap.String("stationID", stationID),
+				zap.Int("doorNo", doorNo),
+				zap.Error(err),
+			)
+		}
+	}
+
+	h.logger.Info("cabinet slot fault injected",
+		zap.String("stationID", stationID),
+		zap.Int("doorNo", doorNo),
+		zap.Bool("fault", fault),
+		zap.String("reason", reason),
+	)
+	return nil
+}
+
+// InjectCabinetAllSlotsFault 对指定站点的全部插槽注入/恢复故障
+func (h *Hub) InjectCabinetAllSlotsFault(stationID string, fault bool, reason string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	s, ok := h.stations[stationID]
+	if !ok {
+		return fmt.Errorf("station %s not found", stationID)
+	}
+
+	if !s.SetAllCabinetSlotsFault(fault, reason) {
+		return fmt.Errorf("station %s has no cabinet", stationID)
+	}
+
+	// 持久化到数据库
+	if h.db != nil {
+		status := 4
+		if !fault {
+			status = 1
+		}
+		for i := 1; i <= s.GetCabinet().TotalPorts; i++ {
+			if err := model.UpsertCabinetSlotStatus(h.db, &model.CabinetSlotStatus{
+				StationID: stationID,
+				DoorNo:    i,
+				Status:    status,
+				Reason:    reason,
+			}); err != nil {
+				h.logger.Warn("failed to persist cabinet slot status",
+					zap.String("stationID", stationID),
+					zap.Int("doorNo", i),
+					zap.Error(err),
+				)
+			}
+		}
+	}
+
+	h.logger.Info("cabinet all slots fault injected",
+		zap.String("stationID", stationID),
+		zap.Bool("fault", fault),
+		zap.String("reason", reason),
+	)
+	return nil
+}
+
+// RestoreCabinetSlotStatuses 从数据库恢复管控柜插槽故障状态（启动时调用）
+func (h *Hub) RestoreCabinetSlotStatuses() error {
+	if h.db == nil {
+		return nil
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	for _, s := range h.stations {
+		statuses, err := model.ListCabinetSlotStatusesByStation(h.db, s.ID)
+		if err != nil {
+			h.logger.Warn("failed to list cabinet slot statuses",
+				zap.String("stationID", s.ID),
+				zap.Error(err),
+			)
+			continue
+		}
+		for _, st := range statuses {
+			if st.Status == 4 {
+				s.SetCabinetSlotFault(st.DoorNo, true, st.Reason)
+			}
+		}
+	}
+
+	h.logger.Info("cabinet slot statuses restored")
+	return nil
+}
+
+// AddUsbDevice 添加 U 盘设备（内存 + 数据库）
 func (h *Hub) AddUsbDevice(u *simulator.UsbDevice) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -485,11 +617,33 @@ func (h *Hub) AddUsbDevice(u *simulator.UsbDevice) error {
 
 	h.usbDevs[u.ID] = u
 
+	// 持久化到数据库
+	if h.db != nil {
+		row := &model.SimUsbRow{
+			ID:              u.ID,
+			SN:              u.SN,
+			Model:           u.Model,
+			FirmwareVersion: u.FirmwareVersion,
+			Qualified:       btoi(u.Qualified),
+			AreaName:        u.AreaName,
+			ClaimInfo:       "{}",
+			Inserted:        btoi(u.Inserted),
+			StationID:       u.StationID,
+			DoorNo:          u.DoorNo,
+		}
+		if err := model.InsertUsb(h.db, row); err != nil {
+			h.logger.Warn("failed to persist usb to DB",
+				zap.String("usbID", u.ID),
+				zap.Error(err),
+			)
+		}
+	}
+
 	h.logger.Info("usb device added", zap.String("usbID", u.ID))
 	return nil
 }
 
-// RemoveUsbDevice 移除 U 盘设备
+// RemoveUsbDevice 移除 U 盘设备（内存 + 数据库）
 func (h *Hub) RemoveUsbDevice(id string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -500,7 +654,43 @@ func (h *Hub) RemoveUsbDevice(id string) error {
 
 	delete(h.usbDevs, id)
 
+	// 从数据库删除
+	if h.db != nil {
+		if err := model.DeleteUsb(h.db, id); err != nil {
+			h.logger.Warn("failed to delete usb from DB",
+				zap.String("usbID", id),
+				zap.Error(err),
+			)
+		}
+	}
+
 	h.logger.Info("usb device removed", zap.String("usbID", id))
+	return nil
+}
+
+// RestoreUsbs 从数据库恢复 U 盘设备到内存
+func (h *Hub) RestoreUsbs() error {
+	if h.db == nil {
+		return nil
+	}
+	rows, err := model.ListUsbs(h.db)
+	if err != nil {
+		return fmt.Errorf("list usbs from DB: %w", err)
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	for _, row := range rows {
+		usb := simulator.NewUsbDevice(row.ID, row.SN, row.Model, row.FirmwareVersion, row.AreaName)
+		usb.Qualified = row.Qualified != 0
+		usb.Inserted = row.Inserted != 0
+		usb.StationID = row.StationID
+		usb.DoorNo = row.DoorNo
+		h.usbDevs[row.ID] = usb
+	}
+
+	h.logger.Info("usbs restored", zap.Int("count", len(rows)))
 	return nil
 }
 

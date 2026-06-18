@@ -103,6 +103,9 @@ type SimStation struct {
 
 	// 状态变更回调（由 Hub 注入，用于通知前端 WebSocket）
 	OnStateChange func(stationID string, oldState, newState string, deviceID uint32) `json:"-"`
+
+	// 消息接收回调（由 Hub 注入，用于记录消息日志）
+	OnMessageReceived func(stationID string, cmdID uint32, body string, latencyMs int) `json:"-"`
 }
 
 // NewSimStation 创建模拟安检站
@@ -392,6 +395,13 @@ func (s *SimStation) receiveLoop() {
 		frame := &protocol.Frame{Header: header, Body: body}
 		s.MsgReceived++
 
+		// 记录接收日志
+		bodyJSON, _ := frame.BodyJSON()
+		if bodyJSON == "" {
+			bodyJSON = fmt.Sprintf("<raw:%d bytes>", len(body))
+		}
+		s.notifyMessageReceived(header.CmdID, bodyJSON)
+
 		s.logger.Debug("received frame",
 			zap.String("station", s.ID),
 			zap.Uint32("cmdID", header.CmdID),
@@ -520,6 +530,53 @@ func (s *SimStation) UpdateCabinetDoorStatus(doorNo int, status int) {
 	}
 }
 
+// SetCabinetSlotFault 设置管控柜插槽故障（线程安全）
+func (s *SimStation) SetCabinetSlotFault(doorNo int, fault bool, reason string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.Cabinet == nil {
+		return false
+	}
+	return s.Cabinet.SetSlotFault(doorNo, fault, reason)
+}
+
+// SetAllCabinetSlotsFault 设置全部插槽故障（线程安全）
+func (s *SimStation) SetAllCabinetSlotsFault(fault bool, reason string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.Cabinet == nil {
+		return false
+	}
+	s.Cabinet.SetAllSlotsFault(fault, reason)
+	return true
+}
+
+// GetCabinetSlotStatus 获取插槽状态（线程安全）
+func (s *SimStation) GetCabinetSlotStatus(doorNo int) (CabinetSlot, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.Cabinet == nil {
+		return CabinetSlot{}, false
+	}
+	return s.Cabinet.GetSlotStatus(doorNo)
+}
+
+// GetCabinetSlotFaults 获取所有故障插槽（线程安全）
+func (s *SimStation) GetCabinetSlotFaults() []CabinetSlot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.Cabinet == nil {
+		return nil
+	}
+	var result []CabinetSlot
+	for _, slot := range s.Cabinet.Slots {
+		if slot.Fault {
+			result = append(result, slot)
+		}
+	}
+	return result
+}
+
 // GetResources 获取资源使用率（线程安全）
 func (s *SimStation) GetResources() Resources {
 	s.mu.Lock()
@@ -553,6 +610,13 @@ func (s *SimStation) SetDeviceID(id uint32) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.DeviceID = id
+}
+
+// notifyMessageReceived 通知消息接收（内部方法）
+func (s *SimStation) notifyMessageReceived(cmdID uint32, body string) {
+	if s.OnMessageReceived != nil {
+		s.OnMessageReceived(s.ID, cmdID, body, 0)
+	}
 }
 
 // notifyStateChange 通知状态变更（内部方法）

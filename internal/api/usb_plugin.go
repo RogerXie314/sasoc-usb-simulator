@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/usb-simulator/internal/hub"
+	"github.com/usb-simulator/internal/model"
 	"github.com/usb-simulator/internal/simulator"
 	"go.uber.org/zap"
 )
@@ -19,6 +20,14 @@ type usbPluginHandler struct {
 // newUsbPluginHandler 创建U盘插件处理器
 func newUsbPluginHandler(h *hub.Hub) *usbPluginHandler {
 	return &usbPluginHandler{hub: h}
+}
+
+// btoi bool转int（本地辅助函数）
+func btoi(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // listUsb GET /api/v1/usbs
@@ -848,6 +857,32 @@ func (uh *usbPluginHandler) updateUsbFault(c *gin.Context) {
 	}
 	if req.ReadFail != nil {
 		usb.ReadFail = *req.ReadFail
+	}
+
+	// 持久化故障注入到数据库
+	if db := uh.hub.DB(); db != nil {
+		row := &model.SimUsbRow{
+			ID:         usb.ID,
+			SN:         usb.SN,
+			WriteDelay: usb.WriteDelay,
+			ReadDelay:  usb.ReadDelay,
+			WriteFail:  btoi(usb.WriteFail),
+			ReadFail:   btoi(usb.ReadFail),
+		}
+		// 先查询现有记录，保留其他字段
+		if existing, err := model.GetUsb(db, usb.ID); err == nil && existing != nil {
+			row.Model = existing.Model
+			row.FirmwareVersion = existing.FirmwareVersion
+			row.Qualified = existing.Qualified
+			row.AreaName = existing.AreaName
+			row.ClaimInfo = existing.ClaimInfo
+			row.Inserted = existing.Inserted
+			row.StationID = existing.StationID
+			row.DoorNo = existing.DoorNo
+		}
+		if err := model.InsertUsb(db, row); err != nil {
+			zap.L().Warn("failed to persist usb fault to DB", zap.String("usbID", usb.ID), zap.Error(err))
+		}
 	}
 
 	responseSuccess(c, gin.H{

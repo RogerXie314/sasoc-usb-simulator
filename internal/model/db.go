@@ -72,6 +72,10 @@ CREATE TABLE IF NOT EXISTS sim_usb (
     inserted         INTEGER NOT NULL DEFAULT 0,
     station_id       TEXT    NOT NULL DEFAULT '',
     door_no          INTEGER NOT NULL DEFAULT 0,
+    write_delay      INTEGER NOT NULL DEFAULT 0,
+    read_delay       INTEGER NOT NULL DEFAULT 0,
+    write_fail       INTEGER NOT NULL DEFAULT 0,
+    read_fail        INTEGER NOT NULL DEFAULT 0,
     created_at       DATETIME NOT NULL DEFAULT (datetime('now','localtime')),
     updated_at       DATETIME NOT NULL DEFAULT (datetime('now','localtime'))
 );
@@ -159,6 +163,10 @@ type SimUsbRow struct {
 	Inserted        int    `json:"inserted"`
 	StationID       string `json:"stationId"`
 	DoorNo          int    `json:"doorNo"`
+	WriteDelay      int    `json:"writeDelay"`
+	ReadDelay       int    `json:"readDelay"`
+	WriteFail       int    `json:"writeFail"`
+	ReadFail        int    `json:"readFail"`
 }
 
 // MessageLogRow message_log 表行

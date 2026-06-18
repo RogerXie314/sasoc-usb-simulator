@@ -451,7 +451,11 @@ const StationPage = {
                 <div style="font-size:13px;color:#909399;margin-bottom:8px;display:flex;align-items:center;gap:8px">
                   <span>管控柜状态</span>
                   <span style="font-size:11px;color:#c0c4cc">({{row.cabinet?.totalPorts||24}}口)</span>
-                  <span style="margin-left:auto;display:flex;gap:10px;align-items:center;font-size:11px">
+                  <span style="margin-left:auto;display:flex;gap:6px;align-items:center">
+                    <el-button size="small" type="danger" @click="openCabinetFaultDialog(row, 'single')" style="font-size:11px;padding:4px 8px">故障注入</el-button>
+                    <el-button size="small" type="success" @click="restoreCabinet(row)" style="font-size:11px;padding:4px 8px">恢复</el-button>
+                  </span>
+                  <span style="display:flex;gap:10px;align-items:center;font-size:11px;margin-left:8px">
                     <span style="display:flex;align-items:center;gap:3px"><span style="width:10px;height:10px;border-radius:2px;background:#f0f2f5;border:1px solid #c0c4cc;display:inline-block"></span>空闲</span>
                     <span style="display:flex;align-items:center;gap:3px"><span style="width:10px;height:10px;border-radius:2px;background:#409eff;display:inline-block"></span>有U盘</span>
                     <span style="display:flex;align-items:center;gap:3px"><span style="width:10px;height:10px;border-radius:2px;background:#67c23a;display:inline-block"></span>门开</span>
@@ -584,6 +588,27 @@ const StationPage = {
           <el-button type="primary" @click="batchCreate" :loading="batching">批量创建</el-button>
         </template>
       </el-dialog>
+
+      <!-- Cabinet Fault Injection Dialog -->
+      <el-dialog v-model="cabinetFaultVisible" title="管控柜故障注入" width="480px" destroy-on-close>
+        <el-form :model="cabinetFaultForm" label-width="100px" size="default">
+          <el-form-item label="安检站"><el-input :model-value="cabinetFaultTarget?.sn||''" disabled /></el-form-item>
+          <el-form-item label="注入范围">
+            <el-radio-group v-model="cabinetFaultForm.mode">
+              <el-radio value="single">单槽注入</el-radio>
+              <el-radio value="all">整柜注入</el-radio>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item label="槽位号" v-if="cabinetFaultForm.mode==='single'">
+            <el-input-number v-model="cabinetFaultForm.doorNo" :min="1" :max="cabinetFaultTarget?.cabinet?.totalPorts||24" />
+          </el-form-item>
+          <el-form-item label="故障原因"><el-input v-model="cabinetFaultForm.reason" placeholder="可选，描述故障原因" /></el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="cabinetFaultVisible=false">取消</el-button>
+          <el-button type="danger" @click="applyCabinetFault">注入故障</el-button>
+        </template>
+      </el-dialog>
     </div>
   `,
   data() {
@@ -599,7 +624,10 @@ const StationPage = {
       unsub: null,
       stationMsgs: {},
       globalSasocHost: '192.168.1.1',
-      globalSasocPort: 4567
+      globalSasocPort: 4567,
+      cabinetFaultVisible: false,
+      cabinetFaultTarget: null,
+      cabinetFaultForm: { mode:'single', doorNo:1, reason:'' }
     };
   },
   methods: {
@@ -826,6 +854,37 @@ const StationPage = {
         this.stationMsgs[data.sn].unshift(entry);
         if (this.stationMsgs[data.sn].length > 20) this.stationMsgs[data.sn].length = 20;
       }
+    },
+    openCabinetFaultDialog(row, mode) {
+      this.cabinetFaultTarget = row;
+      this.cabinetFaultForm = { mode: mode || 'single', doorNo: 1, reason: '' };
+      this.cabinetFaultVisible = true;
+    },
+    async applyCabinetFault() {
+      if (!this.cabinetFaultTarget) return;
+      const stationId = this.cabinetFaultTarget.sn || this.cabinetFaultTarget.stationId;
+      try {
+        if (this.cabinetFaultForm.mode === 'all') {
+          await apiPost(`/cabinet/${stationId}/fault-batch`, { doorNos: [], reason: this.cabinetFaultForm.reason });
+          ElementPlus.ElMessage.success('整柜故障注入成功');
+        } else {
+          await apiPost(`/cabinet/${stationId}/fault`, { doorNo: this.cabinetFaultForm.doorNo, reason: this.cabinetFaultForm.reason });
+          ElementPlus.ElMessage.success(`槽位 ${this.cabinetFaultForm.doorNo} 故障注入成功`);
+        }
+        this.cabinetFaultVisible = false;
+        this.loadStations();
+      } catch (e) {
+        ElementPlus.ElMessage.error('故障注入失败: ' + (e.message || e));
+      }
+    },
+    async restoreCabinet(row) {
+      const stationId = row.sn || row.stationId;
+      try {
+        await ElementPlus.ElMessageBox.confirm('确认恢复该管控柜所有槽位状态?', '恢复确认', { type: 'info' });
+        await apiPost(`/cabinet/${stationId}/restore`, { doorNo: 0 });
+        ElementPlus.ElMessage.success('管控柜状态已恢复');
+        this.loadStations();
+      } catch {}
     }
   },
   mounted() {
@@ -1646,7 +1705,16 @@ const LogPage = {
         if (this.filters.cmdId) params.set('cmd_id', this.filters.cmdId);
         if (this.filters.direction) params.set('direction', this.filters.direction);
         const r = await apiGet('/logs?' + params.toString());
-        this.logs = r.logs || r || [];
+        this.logs = (r.logs || []).map(log => ({
+          time: log.createdAt || log.created_at || '-',
+          station_sn: log.stationId || log.station_id || '-',
+          cmd_id: log.cmdid || log.cmd_id || 0,
+          direction: log.direction || '',
+          requestBody: log.requestBody || log.request_body || '',
+          responseBody: log.responseBody || log.response_body || '',
+          latencyMs: log.latencyMs || log.latency_ms || 0,
+          ...log
+        }));
         this.totalLogs = r.total || this.logs.length;
       } catch (e) { ElementPlus.ElMessage.error('加载失败: ' + e.message); }
       finally { this.loading = false; }
@@ -1667,9 +1735,10 @@ const LogPage = {
       if (data.type === 'message') {
         this.logs.unshift({
           time: new Date().toLocaleString(),
-          station_sn: data.sn || '',
-          cmd_id: data.cmd_id,
+          station_sn: data.stationId || '',
+          cmd_id: data.cmdId,
           direction: data.direction || 'recv',
+          latencyMs: data.latencyMs || 0,
           raw: data
         });
         if (this.logs.length > 500) this.logs.length = 500;

@@ -630,6 +630,10 @@ func (h *Hub) AddUsbDevice(u *simulator.UsbDevice) error {
 			Inserted:        btoi(u.Inserted),
 			StationID:       u.StationID,
 			DoorNo:          u.DoorNo,
+			WriteDelay:      u.WriteDelay,
+			ReadDelay:       u.ReadDelay,
+			WriteFail:       btoi(u.WriteFail),
+			ReadFail:        btoi(u.ReadFail),
 		}
 		if err := model.InsertUsb(h.db, row); err != nil {
 			h.logger.Warn("failed to persist usb to DB",
@@ -687,6 +691,10 @@ func (h *Hub) RestoreUsbs() error {
 		usb.Inserted = row.Inserted != 0
 		usb.StationID = row.StationID
 		usb.DoorNo = row.DoorNo
+		usb.WriteDelay = row.WriteDelay
+		usb.ReadDelay = row.ReadDelay
+		usb.WriteFail = row.WriteFail != 0
+		usb.ReadFail = row.ReadFail != 0
 		h.usbDevs[row.ID] = usb
 	}
 

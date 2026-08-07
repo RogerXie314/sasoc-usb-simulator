@@ -47,11 +47,11 @@ func ListStations(db *sql.DB, status string) ([]*SimStationRow, error) {
 
 	if status != "" {
 		query = `SELECT id, sn, model, version, ip, mac, name, device_id, status, config
-			FROM sim_station WHERE status = ? ORDER BY created_at DESC`
+			FROM sim_station WHERE status = ? ORDER BY sn ASC`
 		args = append(args, status)
 	} else {
 		query = `SELECT id, sn, model, version, ip, mac, name, device_id, status, config
-			FROM sim_station ORDER BY created_at DESC`
+			FROM sim_station ORDER BY sn ASC`
 	}
 
 	rows, err := db.Query(query, args...)

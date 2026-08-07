@@ -770,18 +770,21 @@ const StationPage = {
       }
     },
     async loadStations() {
-      this.loading = true;
+      const isFirstLoad = this.stations.length === 0;
+      if (isFirstLoad) this.loading = true;
       try {
         const r = await apiGet('/stations');
+        let list = [];
         if (r && r.stations) {
-          this.stations = r.stations;
+          list = r.stations;
         } else if (Array.isArray(r)) {
-          this.stations = r;
-        } else {
-          this.stations = [];
+          list = r;
         }
+        // 按 SN 稳定排序，确保列表顺序不随刷新变化
+        list.sort((a, b) => (a.sn || '').localeCompare(b.sn || '', undefined, { numeric: true, sensitivity: 'base' }));
+        this.stations = list;
       } catch (e) { ElementPlus.ElMessage.error('加载失败: ' + e.message); }
-      finally { this.loading = false; }
+      finally { if (isFirstLoad) this.loading = false; }
       this.loadStats();
     },
     async loadGlobalConfig() {

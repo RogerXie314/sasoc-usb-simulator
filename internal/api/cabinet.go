@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/usb-simulator/internal/hub"
+	"github.com/usb-simulator/internal/simulator"
 )
 
 // cabinetHandler 管控柜 API 处理器
@@ -19,10 +20,24 @@ func newCabinetHandler(h *hub.Hub) *cabinetHandler {
 
 // --- 故障注入 ---
 
+// resolveStation 按 SN 或 ID 查找站点
+func (ch *cabinetHandler) resolveStation(param string) (*simulator.SimStation, bool) {
+	station, exists := ch.hub.GetStationBySN(param)
+	if !exists {
+		station, exists = ch.hub.GetStation(param)
+	}
+	return station, exists
+}
+
 // injectSlotFault POST /api/v1/cabinet/:stationId/fault
 // 对指定站点的单个插槽注入故障
 func (ch *cabinetHandler) injectSlotFault(c *gin.Context) {
 	stationID := c.Param("stationId")
+	station, ok := ch.resolveStation(stationID)
+	if !ok {
+		responseError(c, http.StatusNotFound, "station "+stationID+" not found")
+		return
+	}
 	var req struct {
 		DoorNo int    `json:"doorNo" binding:"required,min=1"`
 		Reason string `json:"reason"`
@@ -32,13 +47,13 @@ func (ch *cabinetHandler) injectSlotFault(c *gin.Context) {
 		return
 	}
 
-	if err := ch.hub.InjectCabinetSlotFault(stationID, req.DoorNo, true, req.Reason); err != nil {
+	if err := ch.hub.InjectCabinetSlotFault(station.ID, req.DoorNo, true, req.Reason); err != nil {
 		responseError(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	responseSuccess(c, gin.H{
-		"stationId": stationID,
+		"stationId": station.ID,
 		"doorNo":    req.DoorNo,
 		"status":    4,
 		"message":   "fault injected",
@@ -49,8 +64,13 @@ func (ch *cabinetHandler) injectSlotFault(c *gin.Context) {
 // 批量注入故障（支持整柜注入或指定 doorNo 列表）
 func (ch *cabinetHandler) injectBatchFault(c *gin.Context) {
 	stationID := c.Param("stationId")
+	station, ok := ch.resolveStation(stationID)
+	if !ok {
+		responseError(c, http.StatusNotFound, "station "+stationID+" not found")
+		return
+	}
 	var req struct {
-		DoorNos []int  `json:"doorNos"`         // 为空表示整柜注入
+		DoorNos []int  `json:"doorNos"` // 为空表示整柜注入
 		Reason  string `json:"reason"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -60,12 +80,12 @@ func (ch *cabinetHandler) injectBatchFault(c *gin.Context) {
 
 	// 若未指定 doorNos，则注入整柜
 	if len(req.DoorNos) == 0 {
-		if err := ch.hub.InjectCabinetAllSlotsFault(stationID, true, req.Reason); err != nil {
+		if err := ch.hub.InjectCabinetAllSlotsFault(station.ID, true, req.Reason); err != nil {
 			responseError(c, http.StatusBadRequest, err.Error())
 			return
 		}
 		responseSuccess(c, gin.H{
-			"stationId": stationID,
+			"stationId": station.ID,
 			"scope":     "all",
 			"message":   "all slots fault injected",
 		})
@@ -75,19 +95,24 @@ func (ch *cabinetHandler) injectBatchFault(c *gin.Context) {
 	// 批量单槽注入
 	results := make([]gin.H, 0, len(req.DoorNos))
 	for _, doorNo := range req.DoorNos {
-		if err := ch.hub.InjectCabinetSlotFault(stationID, doorNo, true, req.Reason); err != nil {
+		if err := ch.hub.InjectCabinetSlotFault(station.ID, doorNo, true, req.Reason); err != nil {
 			results = append(results, gin.H{"doorNo": doorNo, "success": false, "error": err.Error()})
 		} else {
 			results = append(results, gin.H{"doorNo": doorNo, "success": true, "status": 4})
 		}
 	}
-	responseSuccess(c, gin.H{"stationId": stationID, "results": results})
+	responseSuccess(c, gin.H{"stationId": station.ID, "results": results})
 }
 
 // restoreSlot POST /api/v1/cabinet/:stationId/restore
 // 恢复单个插槽或整柜（不传 doorNo 表示整柜恢复）
 func (ch *cabinetHandler) restoreSlot(c *gin.Context) {
 	stationID := c.Param("stationId")
+	station, ok := ch.resolveStation(stationID)
+	if !ok {
+		responseError(c, http.StatusNotFound, "station "+stationID+" not found")
+		return
+	}
 	var req struct {
 		DoorNo int `json:"doorNo"` // 0 或不传表示整柜恢复
 	}
@@ -97,12 +122,12 @@ func (ch *cabinetHandler) restoreSlot(c *gin.Context) {
 	}
 
 	if req.DoorNo == 0 {
-		if err := ch.hub.InjectCabinetAllSlotsFault(stationID, false, ""); err != nil {
+		if err := ch.hub.InjectCabinetAllSlotsFault(station.ID, false, ""); err != nil {
 			responseError(c, http.StatusBadRequest, err.Error())
 			return
 		}
 		responseSuccess(c, gin.H{
-			"stationId": stationID,
+			"stationId": station.ID,
 			"scope":     "all",
 			"status":    1,
 			"message":   "all slots restored",
@@ -110,12 +135,12 @@ func (ch *cabinetHandler) restoreSlot(c *gin.Context) {
 		return
 	}
 
-	if err := ch.hub.InjectCabinetSlotFault(stationID, req.DoorNo, false, ""); err != nil {
+	if err := ch.hub.InjectCabinetSlotFault(station.ID, req.DoorNo, false, ""); err != nil {
 		responseError(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	responseSuccess(c, gin.H{
-		"stationId": stationID,
+		"stationId": station.ID,
 		"doorNo":    req.DoorNo,
 		"status":    1,
 		"message":   "slot restored",
@@ -126,7 +151,7 @@ func (ch *cabinetHandler) restoreSlot(c *gin.Context) {
 // 查询站点管控柜全部插槽状态
 func (ch *cabinetHandler) listSlots(c *gin.Context) {
 	stationID := c.Param("stationId")
-	station, exists := ch.hub.GetStation(stationID)
+	station, exists := ch.resolveStation(stationID)
 	if !exists {
 		responseError(c, http.StatusNotFound, "station not found")
 		return
@@ -162,7 +187,7 @@ func (ch *cabinetHandler) listSlots(c *gin.Context) {
 	}
 
 	responseSuccess(c, gin.H{
-		"stationId":  stationID,
+		"stationId":  station.ID,
 		"totalPorts": cabinet.TotalPorts,
 		"usedPorts":  cabinet.UsedPorts,
 		"slots":      slots,

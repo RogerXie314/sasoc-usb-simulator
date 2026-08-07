@@ -425,7 +425,7 @@ const StationPage = {
           <el-button type="primary" @click="showBatchDialog"><el-icon><Plus /></el-icon>批量创建</el-button>
           <el-button type="success" @click="showCreateDialog"><el-icon><Plus /></el-icon>创建安检站</el-button>
           <el-button type="danger" @click="batchDelete" :disabled="selectedStations.length===0" :loading="batchDeleting">
-            <el-icon><Delete /></el-icon>批量删除{{selectedStations.length>0?` (${selectedStations.length})`:''}}
+            <el-icon><Delete /></el-icon>批量删除{{selectedStations.length>0?' ('+selectedStations.length+')':''}}
           </el-button>
           <el-button @click="loadStations"><el-icon><Refresh /></el-icon>刷新</el-button>
         </div>

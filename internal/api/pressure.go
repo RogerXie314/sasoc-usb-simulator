@@ -49,13 +49,13 @@ func newPressureHandler(h *hub.Hub) *pressureHandler {
 
 // startPressureRequest 启动压测请求
 type startPressureRequest struct {
-	StationCount      int  `json:"stationCount"`
-	HeartbeatInterval int  `json:"heartbeatInterval"` // 秒
-	Duration          int  `json:"duration"`           // 秒，0=无限
+	StationCount      int    `json:"stationCount"`
+	HeartbeatInterval int    `json:"heartbeatInterval"` // 秒
+	Duration          int    `json:"duration"`          // 秒，0=无限
 	SasocHost         string `json:"sasocHost"`
-	SasocPort         int  `json:"sasocPort"`
-	Encrypt           bool `json:"encrypt"`
-	Compress          bool `json:"compress"`
+	SasocPort         int    `json:"sasocPort"`
+	Encrypt           bool   `json:"encrypt"`
+	Compress          bool   `json:"compress"`
 }
 
 // startPressure POST /api/v1/pressure/start
@@ -171,10 +171,10 @@ func (ph *pressureHandler) getReport(c *gin.Context) {
 
 	stations := ph.hub.ListStations()
 	type stationSummary struct {
-		ID         string `json:"stationId"`
-		Status     string `json:"status"`
-		MsgSent    int64  `json:"msgSent"`
-		MsgRecv    int64  `json:"msgReceived"`
+		ID      string `json:"stationId"`
+		Status  string `json:"status"`
+		MsgSent int64  `json:"msgSent"`
+		MsgRecv int64  `json:"msgReceived"`
 	}
 
 	summaries := make([]stationSummary, 0, len(stations))
@@ -223,6 +223,8 @@ func (ph *pressureHandler) runPressureTest(req startPressureRequest) {
 		name := fmt.Sprintf("压测站点-%d", i)
 
 		s := simulator.NewSimStation(id, sn, "SASOC-M100", "v2.0.0", name)
+		s.IP = hub.GenerateSequentialIP()
+		s.MAC = hub.GenerateSequentialMAC()
 		s.HeartbeatInterval = req.HeartbeatInterval
 		s.HeartbeatEnabled = true
 		s.EncryptEnabled = req.Encrypt

@@ -21,7 +21,7 @@ type EchoServer struct {
 
 	mu         sync.RWMutex
 	connections map[string]net.Conn // key = remote addr
-	deviceMap   map[uint32]string   // deviceId → remote addr
+	deviceMap   map[uint32]string   // deviceId → station SN
 	nextDevID   uint32
 
 	logger *zap.Logger
@@ -166,9 +166,19 @@ func (s *EchoServer) handleCommand(conn net.Conn, reqHeader *protocol.Header, bo
 		cmdContent = body // 兼容扁平格式
 	}
 
+	// 确保 cmdContent 不为 nil
+	if cmdContent == nil {
+		cmdContent = make(map[string]interface{})
+	}
+
 	switch reqHeader.CmdID {
 	case protocol.CmdRegister:
-		respBody = s.handleRegister(reqHeader, cmdContent)
+		// 提取 msgId 用于透传到响应
+		msgId, _ := body["msgId"].(string)
+		if msgId == "" {
+			msgId, _ = cmdContent["msgId"].(string)
+		}
+		respBody = s.handleRegister(reqHeader, cmdContent, msgId)
 	case protocol.CmdHeartbeat:
 		// 心跳应答为空
 		respBody = nil
@@ -233,12 +243,12 @@ func (s *EchoServer) handleCommand(conn net.Conn, reqHeader *protocol.Header, bo
 	}
 }
 
-// wrapCMDContent 将内部响应包装为协议格式 {CMDID, CMDVER, msgId, CMDContent:{...}}
+// wrapCMDContent 将内部响应包装为协议格式 {CMDID, msgId, CMDContent:{...}}
+// SASOC 响应格式：{CMDID, msgId, CMDContent:{code, message, data:{...}}}
 func wrapCMDContent(innerResp map[string]interface{}, reqBody map[string]interface{}) map[string]interface{} {
 	// 透传请求中的 msgId（如果有的话）
 	msgId, _ := reqBody["msgId"].(string)
 	result := map[string]interface{}{
-		"CMDVER":     1,
 		"CMDContent": innerResp,
 	}
 	if msgId != "" {
@@ -247,9 +257,30 @@ func wrapCMDContent(innerResp map[string]interface{}, reqBody map[string]interfa
 	return result
 }
 
+// wrapRegisterResponse 注册应答专用包装
+// SASOC 格式：{CMDID:102, msgId:"...", CMDContent:{code:0, message:"success", data:{deviceId:xxx}}}
+func (s *EchoServer) wrapRegisterResponse(devID uint32, msgId string) map[string]interface{} {
+	result := map[string]interface{}{
+		"CMDContent": map[string]interface{}{
+			"code":    0,
+			"message": "success",
+			"data": map[string]interface{}{
+				"deviceId": devID,
+			},
+		},
+	}
+	if msgId != "" {
+		result["msgId"] = msgId
+	}
+	return result
+}
+
 // handleRegister 处理注册请求
-func (s *EchoServer) handleRegister(header *protocol.Header, cmdContent map[string]interface{}) map[string]interface{} {
+func (s *EchoServer) handleRegister(header *protocol.Header, cmdContent map[string]interface{}, msgId string) map[string]interface{} {
 	sn, _ := cmdContent["sn"].(string)
+	if sn == "" {
+		sn, _ = cmdContent["ComputerID"].(string)
+	}
 	s.logger.Info("register request", zap.String("sn", sn))
 
 	// 检查容量
@@ -262,14 +293,12 @@ func (s *EchoServer) handleRegister(header *protocol.Header, cmdContent map[stri
 	// 分配 deviceId
 	devID := s.nextDevID
 	s.nextDevID++
-	s.deviceMap[devID] = fmt.Sprintf("%d", header.DevID) // 记录映射
+	s.deviceMap[devID] = sn // 记录映射：deviceId → station SN
 	s.mu.Unlock()
 
-	innerResp := map[string]interface{}{
-		"code":     0,
-		"deviceId": devID,
-	}
-	return wrapCMDContent(innerResp, nil)
+	// 注册应答使用 SASOC 标准格式
+	// 需要从 cmdContent 或 body 中提取 msgId
+	return s.wrapRegisterResponse(devID, "")
 }
 
 // handleClaimVerify 处理申领码验证

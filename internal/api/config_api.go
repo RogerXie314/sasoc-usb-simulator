@@ -57,7 +57,7 @@ func (ch *configHandler) getSasocStatus(c *gin.Context) {
 		return
 	}
 
-	addr := fmt.Sprintf("%s:%d", cfg.Sasoc.Host, cfg.Sasoc.Port)
+	addr := net.JoinHostPort(cfg.Sasoc.Host, fmt.Sprintf("%d", cfg.Sasoc.Port))
 	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
 	if err != nil {
 		responseSuccess(c, gin.H{

@@ -242,7 +242,7 @@ func (s *SimStation) connectAndRegister() error {
 	s.notifyStateChange(oldState)
 
 	// 建立 TCP 连接
-	addr := fmt.Sprintf("%s:%d", s.SasocHost, s.SasocPort)
+	addr := net.JoinHostPort(s.SasocHost, fmt.Sprintf("%d", s.SasocPort))
 	conn, err := net.DialTimeout("tcp", addr, 10*time.Second)
 	if err != nil {
 		oldState = s.State

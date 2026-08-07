@@ -25,6 +25,10 @@ func SetupRouter(h *hub.Hub, cfg *config.Config) *gin.Engine {
 	// API v1 分组 — 路径对齐前端调用
 	v1 := r.Group("/api/v1")
 	{
+		// ---- 版本信息 ----
+		v1.GET("/version", func(c *gin.Context) {
+			responseSuccess(c, gin.H{"version": AppVersion})
+		})
 		stationHandler := newStationHandler(h)
 		usbHandler := newUsbPluginHandler(h)
 		pressureHandler := newPressureHandler(h)

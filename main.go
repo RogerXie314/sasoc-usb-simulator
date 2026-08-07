@@ -28,6 +28,9 @@ import (
 //go:embed all:web/dist
 var webFS embed.FS
 
+// AppVersion 应用版本号
+const AppVersion = "V2.2"
+
 // isConsoleAvailable 检测是否有可用的控制台（GUI 模式下没有）
 func isConsoleAvailable() bool {
 	fi, err := os.Stdout.Stat()
@@ -180,12 +183,12 @@ func main() {
 	if hasConsole {
 		banner := fmt.Sprintf(
 			"╔══════════════════════════════════════════════╗\n"+
-				"║  移动介质安检站模拟测试工具                    ║\n"+
+				"║  移动介质安检站模拟测试工具 %-8s           ║\n"+
 				"║  Web 控制台: http://localhost:%-4d           ║\n"+
 				"║  Echo Server: localhost:%-4d (模拟SASOC)     ║\n"+
 				"║  按 Ctrl+C 退出                              ║\n"+
 				"╚══════════════════════════════════════════════╝\n",
-			cfg.Server.Port, cfg.Sasoc.Port,
+			AppVersion, cfg.Server.Port, cfg.Sasoc.Port,
 		)
 		os.Stdout.Write([]byte(banner))
 	} else {
@@ -299,8 +302,8 @@ func main() {
 		tray := NewTrayApp(
 			"移动介质安检站模拟测试工具",
 			url,
-			openBrowserFn,   // 双击托盘图标 → 打开浏览器
-			doShutdown,       // 右键退出 → 触发关闭
+			openBrowserFn, // 双击托盘图标 → 打开浏览器
+			doShutdown,    // 右键退出 → 触发关闭
 		)
 		go tray.Run()
 	}

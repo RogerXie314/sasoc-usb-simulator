@@ -4,7 +4,7 @@ pressure:
     collect_interval: 5
     report_format: html
 sasoc:
-    host: 192.168.60.162
+    host: 192.168.123.24
     port: 4567
 server:
     debug: true

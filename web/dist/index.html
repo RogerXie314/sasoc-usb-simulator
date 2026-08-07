@@ -15,6 +15,7 @@ html,body,#app{height:100%;font-family:'Microsoft YaHei','PingFang SC',sans-seri
 .app-header{height:56px;background:var(--header-bg);display:flex;align-items:center;padding:0 20px;color:#fff;position:fixed;top:0;left:0;right:0;z-index:100;box-shadow:0 2px 8px rgba(0,0,0,.3)}
 .app-header .logo{font-size:20px;font-weight:700;letter-spacing:2px;display:flex;align-items:center;gap:10px}
 .app-header .logo .dot{width:10px;height:10px;border-radius:50%;background:#67c23a;display:inline-block}
+.app-header .logo .app-version{font-size:12px;font-weight:400;color:#909399;background:rgba(255,255,255,.1);padding:2px 8px;border-radius:4px;letter-spacing:0}
 .app-header .header-right{margin-left:auto;display:flex;align-items:center;gap:16px;font-size:13px;color:#aaa}
 .app-header .ws-status{display:flex;align-items:center;gap:6px;font-size:12px}
 .app-header .ws-status .ws-dot{width:8px;height:8px;border-radius:50%;transition:background .3s}
@@ -110,6 +111,7 @@ html,body,#app{height:100%;font-family:'Microsoft YaHei','PingFang SC',sans-seri
     <div class="logo">
       <span class="dot"></span>
       移动介质安检站模拟测试工具
+      <span class="app-version">V2.2</span>
     </div>
     <div class="header-right">
       <div class="sasoc-config" @click="showSasocDialog" title="点击修改SASOC服务器地址">
@@ -394,7 +396,7 @@ const DashboardPage = {
         const cmdName = CMD_MAP[data.cmd_id] || `CMD_${data.cmd_id}`;
         this.events.unshift({ id: Date.now() + Math.random(), time: now, tag: '消息', tagType: 'info', msg: `${data.sn||''} ${cmdName} ${data.direction||''}` });
         this.stats.todayMessages++;
-      } else if (data.type === 'pressure') {
+      } else if (data.type === 'pressure_metric') {
         this.events.unshift({ id: Date.now() + Math.random(), time: now, tag: '压测', tagType: 'warning', msg: data.message || JSON.stringify(data) });
       } else {
         this.events.unshift({ id: Date.now() + Math.random(), time: now, tag: '事件', tagType: 'info', msg: data.message || JSON.stringify(data) });
@@ -1563,43 +1565,51 @@ const PressurePage = {
       try {
         const r = await apiGet('/pressure/status');
         if (r) {
+          const wasRunning = this.running;
           this.running = r.running;
+          var regRate = 0;
+          if (this.config.stationCount > 0) {
+            regRate = Math.round((r.onlineCount || 0) / this.config.stationCount * 10000) / 100;
+          }
           this.metrics = {
-            onlineDevices: r.online_devices || 0,
-            registerRate: Math.round((r.register_rate || 0) * 100) / 100,
-            heartbeatRate: Math.round((r.heartbeat_rate || 0) * 100) / 100,
-            avgLatency: Math.round((r.avg_latency || 0) * 100) / 100
+            onlineDevices: r.onlineCount || 0,
+            registerRate: regRate,
+            heartbeatRate: Math.round((r.heartbeatSuccessRate || 0) * 100) / 100,
+            avgLatency: Math.round((r.avgLatencyMs || 0) * 100) / 100
           };
-          if (!r.running && this.running) {
-            this.running = false;
+          if (r.running && !wasRunning) {
+            this.startPolling();
+          }
+          if (!r.running && wasRunning) {
             this.progress = 100;
             this.stopPolling();
           }
-          if (r.report) { this.report = r.report; }
         }
       } catch {}
     },
     handleWs(data) {
-      if (data.type === 'pressure') {
-        if (data.running !== undefined) this.running = data.running;
-        if (data.metrics) {
-          this.metrics = {
-            onlineDevices: data.metrics.online_devices || this.metrics.onlineDevices,
-            registerRate: Math.round((data.metrics.register_rate || 0) * 100) / 100,
-            heartbeatRate: Math.round((data.metrics.heartbeat_rate || 0) * 100) / 100,
-            avgLatency: Math.round((data.metrics.avg_latency || 0) * 100) / 100
-          };
-        }
-        if (data.report) { this.report = data.report; }
-        if (!data.running && this.running) {
-          this.running = false;
-          this.stopPolling();
+      if (data.type === 'pressure_metric') {
+        if (data.payload) {
+          var p = data.payload;
+          if (p.testId !== undefined && this.running) {
+            var regRate = 0;
+            if (this.config.stationCount > 0) {
+              regRate = Math.round((p.onlineCount || 0) / this.config.stationCount * 10000) / 100;
+            }
+            this.metrics = {
+              onlineDevices: p.onlineCount || this.metrics.onlineDevices,
+              registerRate: regRate,
+              heartbeatRate: Math.round((p.heartbeatSuccessRate || 0) * 100) / 100,
+              avgLatency: Math.round((p.avgLatencyMs || 0) * 100) / 100
+            };
+          }
         }
       }
     }
   },
-  mounted() {
-    this.loadStatus();
+  async mounted() {
+    await this.loadStatus();
+    if (this.running) { this.startPolling(); }
     this.unsub = wsManager.onMessage(this.handleWs);
     // 加载全局 SASOC 配置作为默认值
     apiGet('/config').then(r => {

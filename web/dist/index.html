@@ -424,12 +424,16 @@ const StationPage = {
         <div>
           <el-button type="primary" @click="showBatchDialog"><el-icon><Plus /></el-icon>批量创建</el-button>
           <el-button type="success" @click="showCreateDialog"><el-icon><Plus /></el-icon>创建安检站</el-button>
+          <el-button type="danger" @click="batchDelete" :disabled="selectedStations.length===0" :loading="batchDeleting">
+            <el-icon><Delete /></el-icon>批量删除{{selectedStations.length>0?` (${selectedStations.length})`:''}}
+          </el-button>
           <el-button @click="loadStations"><el-icon><Refresh /></el-icon>刷新</el-button>
         </div>
       </div>
 
       <el-table :data="stations" stripe border style="width:100%" row-key="sn" v-loading="loading"
-        @expand-change="onExpandChange">
+        @expand-change="onExpandChange" @selection-change="handleSelectionChange">
+        <el-table-column type="selection" width="45" />
         <el-table-column type="expand">
           <template #default="{row}">
             <div style="padding:12px 20px">
@@ -621,6 +625,8 @@ const StationPage = {
       batchVisible: false,
       creating: false,
       batching: false,
+      selectedStations: [],
+      batchDeleting: false,
       createForm: { sn:'', model:'SASOC-1000', version:'V200R026C01', name:'', ip:'', mac:'', sasoc_host:'', sasoc_port:0 },
       batchForm: { count:10, model:'SASOC-1000', version:'V200R026C01', prefix:'s', sasoc_host:'', sasoc_port:0, auto_start:false },
       unsub: null,
@@ -826,6 +832,38 @@ const StationPage = {
         ElementPlus.ElMessage.success('已删除');
         this.loadStations();
       } catch {}
+    },
+    handleSelectionChange(rows) {
+      this.selectedStations = rows;
+    },
+    async batchDelete() {
+      const count = this.selectedStations.length;
+      if (count === 0) return;
+      try {
+        await ElementPlus.ElMessageBox.confirm(
+          `确定删除选中的 ${count} 个安检站？此操作不可撤销。`,
+          '批量删除确认',
+          { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+        );
+      } catch { return; }
+
+      this.batchDeleting = true;
+      let successCount = 0;
+      let failCount = 0;
+      const snList = this.selectedStations.map(s => s.sn);
+      // 并发删除，每个站点独立请求
+      const results = await Promise.allSettled(snList.map(sn => apiDelete(`/stations/${sn}`)));
+      for (const r of results) {
+        if (r.status === 'fulfilled') successCount++;
+        else failCount++;
+      }
+      this.batchDeleting = false;
+      if (failCount === 0) {
+        ElementPlus.ElMessage.success(`已删除 ${successCount} 个安检站`);
+      } else {
+        ElementPlus.ElMessage.warning(`成功 ${successCount} 个，失败 ${failCount} 个`);
+      }
+      this.loadStations();
     },
     onExpandChange(row, expandedRows) {
       if (expandedRows.includes(row)) {

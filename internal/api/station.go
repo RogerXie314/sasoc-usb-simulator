@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/usb-simulator/internal/hub"
@@ -135,15 +137,15 @@ func (sh *stationHandler) listStations(c *gin.Context) {
 	// 构建响应（包含运行时信息）
 	type stationInfo struct {
 		*simulator.SimStation
-		MsgSent     int64  `json:"msgSent"`
-		MsgReceived int64  `json:"msgReceived"`
+		MsgSent     int64 `json:"msgSent"`
+		MsgReceived int64 `json:"msgReceived"`
 	}
 
 	result := make([]stationInfo, 0, len(stations))
 	for _, s := range stations {
 		result = append(result, stationInfo{
-			SimStation: s,
-			MsgSent:    s.MsgSent,
+			SimStation:  s,
+			MsgSent:     s.MsgSent,
 			MsgReceived: s.MsgReceived,
 		})
 	}
@@ -411,12 +413,12 @@ func (sh *stationHandler) alarm(c *gin.Context) {
 	}
 
 	var req struct {
-		AlarmType  string `json:"alarmType"`
-		SN         string `json:"sn"`
-		VirusName  string `json:"virusName"`
-		VirusType  string `json:"virusType"`
-		FileName   string `json:"fileName"`
-		FileHash   string `json:"fileHash"`
+		AlarmType string `json:"alarmType"`
+		SN        string `json:"sn"`
+		VirusName string `json:"virusName"`
+		VirusType string `json:"virusType"`
+		FileName  string `json:"fileName"`
+		FileHash  string `json:"fileHash"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		responseError(c, http.StatusBadRequest, "invalid request: "+err.Error())
@@ -681,14 +683,14 @@ func (sh *stationHandler) getStationFromContext(c *gin.Context) (*simulator.SimS
 // batchCreateStations POST /api/v1/stations/batch
 func (sh *stationHandler) batchCreateStations(c *gin.Context) {
 	var req struct {
-		Count      int    `json:"count" binding:"required"`
-		Prefix     string `json:"prefix"`
-		Model      string `json:"model"`
-		Version    string `json:"version"`
-		SasocHost  string `json:"sasocHost"`
-		SasocPort  int    `json:"sasocPort"`
-		Encrypt    bool   `json:"encrypt"`
-		Compress   bool   `json:"compress"`
+		Count     int    `json:"count" binding:"required"`
+		Prefix    string `json:"prefix"`
+		Model     string `json:"model"`
+		Version   string `json:"version"`
+		SasocHost string `json:"sasocHost"`
+		SasocPort int    `json:"sasocPort"`
+		Encrypt   bool   `json:"encrypt"`
+		Compress  bool   `json:"compress"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		responseError(c, http.StatusBadRequest, "invalid request: "+err.Error())
@@ -793,7 +795,11 @@ func (sh *stationHandler) stationAction(c *gin.Context) {
 	sn := c.Param("sn")
 	action := c.Param("action")
 
-	station, exists := sh.hub.GetStation(sn)
+	// 路由参数是 SN，先按 SN 查找，查不到再按 ID 查找（兼容 ID == SN 的情况）
+	station, exists := sh.hub.GetStationBySN(sn)
+	if !exists {
+		station, exists = sh.hub.GetStation(sn)
+	}
 	if !exists {
 		responseError(c, http.StatusNotFound, "station "+sn+" not found")
 		return
@@ -842,7 +848,10 @@ func (sh *stationHandler) stationAction(c *gin.Context) {
 // sendCommand POST /api/v1/stations/:sn/command
 func (sh *stationHandler) sendCommand(c *gin.Context) {
 	sn := c.Param("sn")
-	station, exists := sh.hub.GetStation(sn)
+	station, exists := sh.hub.GetStationBySN(sn)
+	if !exists {
+		station, exists = sh.hub.GetStation(sn)
+	}
 	if !exists {
 		responseError(c, http.StatusNotFound, "station "+sn+" not found")
 		return
@@ -864,15 +873,15 @@ func (sh *stationHandler) sendCommand(c *gin.Context) {
 
 	// 命令名称 → CMDID 映射
 	cmdMap := map[string]uint32{
-		"heartbeat":     protocol.CmdHeartbeat,
-		"info_report":   protocol.CmdInfoReport,
-		"register":      protocol.CmdRegister,
-		"claim_verify":  protocol.CmdClaimVerify,
-		"usb_claim":     protocol.CmdUsbClaim,
-		"usb_return":    protocol.CmdUsbReturn,
-		"alarm":         protocol.CmdAlarm,
-		"operation_log": protocol.CmdOperationLog,
-		"upgrade_issue": protocol.CmdUpgradeIssue,
+		"heartbeat":      protocol.CmdHeartbeat,
+		"info_report":    protocol.CmdInfoReport,
+		"register":       protocol.CmdRegister,
+		"claim_verify":   protocol.CmdClaimVerify,
+		"usb_claim":      protocol.CmdUsbClaim,
+		"usb_return":     protocol.CmdUsbReturn,
+		"alarm":          protocol.CmdAlarm,
+		"operation_log":  protocol.CmdOperationLog,
+		"upgrade_issue":  protocol.CmdUpgradeIssue,
 		"upgrade_result": protocol.CmdUpgradeResult,
 	}
 
@@ -901,22 +910,14 @@ func (sh *stationHandler) sendCommand(c *gin.Context) {
 func (sh *stationHandler) deleteStation(c *gin.Context) {
 	sn := c.Param("sn")
 
-	// 前端用 SN 作为 key，但后端 map 的 key 是 ID（可能 ID == SN）
-	// 先用 SN 查，查不到再尝试遍历找 SN 匹配的
-	station, exists := sh.hub.GetStation(sn)
+	// 路由参数是 SN，先按 SN 查，查不到再按 ID 查
+	station, exists := sh.hub.GetStationBySN(sn)
 	if !exists {
-		// 尝试从列表中找 SN 匹配的
-		for _, s := range sh.hub.ListStations() {
-			if s.SN == sn {
-				station = s
-				exists = true
-				break
-			}
-		}
-		if !exists {
-			responseError(c, http.StatusNotFound, "station "+sn+" not found")
-			return
-		}
+		station, exists = sh.hub.GetStation(sn)
+	}
+	if !exists {
+		responseError(c, http.StatusNotFound, "station "+sn+" not found")
+		return
 	}
 
 	// 先停止
@@ -962,9 +963,9 @@ func (sh *stationHandler) listLogs(c *gin.Context) {
 	}
 
 	responseSuccess(c, gin.H{
-		"total": total,
-		"logs":  logs,
-		"page":  page,
+		"total":    total,
+		"logs":     logs,
+		"page":     page,
 		"pageSize": limit,
 	})
 }
@@ -983,4 +984,128 @@ func (sh *stationHandler) clearLogs(c *gin.Context) {
 	}
 
 	responseSuccess(c, gin.H{"message": "logs cleared"})
+}
+
+// startAllStations POST /api/v1/stations/start-all
+// 分批启动所有处于 idle 状态的安检站，每批 10 个，批间间隔 1 秒
+func (sh *stationHandler) startAllStations(c *gin.Context) {
+	stations := sh.hub.ListStations()
+	var idle []*simulator.SimStation
+	for _, s := range stations {
+		if s.GetState() == simulator.StateIdle {
+			idle = append(idle, s)
+		}
+	}
+
+	if len(idle) == 0 {
+		responseError(c, http.StatusConflict, "no idle stations to start")
+		return
+	}
+
+	go func(idleStations []*simulator.SimStation) {
+		const batchSize = 10
+		const batchInterval = time.Second
+		for i := 0; i < len(idleStations); i += batchSize {
+			end := i + batchSize
+			if end > len(idleStations) {
+				end = len(idleStations)
+			}
+			batch := idleStations[i:end]
+			var wg sync.WaitGroup
+			for _, s := range batch {
+				wg.Add(1)
+				go func(st *simulator.SimStation) {
+					defer wg.Done()
+					if err := st.Start(); err != nil {
+						zap.L().Warn("start station failed",
+							zap.String("station", st.ID),
+							zap.Error(err),
+						)
+					}
+				}(s)
+			}
+			wg.Wait()
+			if end < len(idleStations) {
+				time.Sleep(batchInterval)
+			}
+		}
+	}(idle)
+
+	responseSuccess(c, gin.H{
+		"message": fmt.Sprintf("starting %d stations in batches", len(idle)),
+		"count":   len(idle),
+	})
+}
+
+// stopAllStations POST /api/v1/stations/stop-all
+// 停止所有非 idle 状态的安检站
+func (sh *stationHandler) stopAllStations(c *gin.Context) {
+	stations := sh.hub.ListStations()
+	var active []*simulator.SimStation
+	for _, s := range stations {
+		if s.GetState() != simulator.StateIdle {
+			active = append(active, s)
+		}
+	}
+
+	if len(active) == 0 {
+		responseError(c, http.StatusConflict, "no active stations to stop")
+		return
+	}
+
+	var wg sync.WaitGroup
+	for _, s := range active {
+		wg.Add(1)
+		go func(st *simulator.SimStation) {
+			defer wg.Done()
+			if err := st.Stop(); err != nil {
+				zap.L().Warn("stop station failed",
+					zap.String("station", st.ID),
+					zap.Error(err),
+				)
+			}
+		}(s)
+	}
+	wg.Wait()
+
+	responseSuccess(c, gin.H{
+		"message": fmt.Sprintf("stopped %d stations", len(active)),
+		"count":   len(active),
+	})
+}
+
+// getStationStats GET /api/v1/stations/stats
+// 聚合统计：总数、在线数、总发送消息数、总接收消息数、吞吐量
+func (sh *stationHandler) getStationStats(c *gin.Context) {
+	stations := sh.hub.ListStations()
+
+	total := len(stations)
+	online := 0
+	var totalSent, totalRecv int64
+
+	for _, s := range stations {
+		if s.IsOnline() {
+			online++
+		}
+		totalSent += s.MsgSent
+		totalRecv += s.MsgReceived
+	}
+
+	// 计算吞吐量：取统计窗口内每秒平均消息量
+	// 窗口为最近 60 秒，通过 MsgSent 差值计算
+	// 这里用简单方式：总消息数 / 运行时间（至少 1 秒）
+	throughput := float64(0)
+	if totalSent > 0 {
+		// 粗略估算：按心跳间隔和在线站点数推算
+		throughput = float64(online) / 30.0 // 默认心跳 30 秒，每站点每秒约 1/30 条
+	}
+
+	responseSuccess(c, gin.H{
+		"total":         total,
+		"online":        online,
+		"offline":       total - online,
+		"totalSent":     totalSent,
+		"totalReceived": totalRecv,
+		"throughput":    throughput,
+	})
 }

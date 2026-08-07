@@ -25,7 +25,6 @@ var wsEventTypes = []string{
 	hub.EventStationStateChanged,
 	hub.EventMessageSent,
 	hub.EventMessageReceived,
-	hub.EventPressureMetric,
 	hub.EventUsbInserted,
 	hub.EventUsbRemoved,
 }

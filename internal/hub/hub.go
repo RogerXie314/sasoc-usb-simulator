@@ -65,6 +65,7 @@ func GenerateSequentialMAC() string {
 	return fmt.Sprintf("%02X-%02X-%02X-%02X-%02X-%02X",
 		lastMAC[0], lastMAC[1], lastMAC[2], lastMAC[3], lastMAC[4], lastMAC[5])
 }
+
 type Event struct {
 	Type      string      `json:"type"`      // 事件类型
 	Timestamp time.Time   `json:"timestamp"` // 事件时间
@@ -187,19 +188,19 @@ const (
 
 // StationStatePayload station_state_changed 事件数据
 type StationStatePayload struct {
-	StationID  string `json:"stationId"`
-	OldState   string `json:"oldState"`
-	NewState   string `json:"newState"`
-	DeviceID   uint32 `json:"deviceId,omitempty"`
+	StationID string `json:"stationId"`
+	OldState  string `json:"oldState"`
+	NewState  string `json:"newState"`
+	DeviceID  uint32 `json:"deviceId,omitempty"`
 }
 
 // MessagePayload message_sent / message_received 事件数据
 type MessagePayload struct {
-	StationID  string `json:"stationId"`
-	CmdID      uint32 `json:"cmdid"`
-	Direction  string `json:"direction"`
-	Body       string `json:"body,omitempty"`
-	LatencyMs  int    `json:"latencyMs,omitempty"`
+	StationID string `json:"stationId"`
+	CmdID     uint32 `json:"cmdid"`
+	Direction string `json:"direction"`
+	Body      string `json:"body,omitempty"`
+	LatencyMs int    `json:"latencyMs,omitempty"`
 }
 
 // PressureMetricPayload pressure_metric 事件数据
@@ -365,12 +366,12 @@ func (h *Hub) AddStation(s *simulator.SimStation) error {
 	if h.db != nil {
 		configJSON := "{}"
 		if cfg, err := json.Marshal(map[string]interface{}{
-			"sasocHost":        s.SasocHost,
-			"sasocPort":        s.SasocPort,
-			"heartbeatEnabled": s.HeartbeatEnabled,
+			"sasocHost":         s.SasocHost,
+			"sasocPort":         s.SasocPort,
+			"heartbeatEnabled":  s.HeartbeatEnabled,
 			"heartbeatInterval": s.HeartbeatInterval,
-			"encryptEnabled":   s.EncryptEnabled,
-			"compressEnabled":  s.CompressEnabled,
+			"encryptEnabled":    s.EncryptEnabled,
+			"compressEnabled":   s.CompressEnabled,
 		}); err == nil {
 			configJSON = string(cfg)
 		}
@@ -445,6 +446,19 @@ func (h *Hub) GetStation(id string) (*simulator.SimStation, bool) {
 	defer h.mu.RUnlock()
 	s, ok := h.stations[id]
 	return s, ok
+}
+
+// GetStationBySN 通过 SN 获取安检站
+// 当 ID != SN 时，需要遍历匹配 SN 字段
+func (h *Hub) GetStationBySN(sn string) (*simulator.SimStation, bool) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, s := range h.stations {
+		if s.SN == sn {
+			return s, true
+		}
+	}
+	return nil, false
 }
 
 // ListStations 列出所有安检站
@@ -846,11 +860,11 @@ func (h *Hub) NotifyMessageReceived(stationID string, cmdID uint32, body string,
 		return
 	}
 	h.bus.Publish(EventMessageReceived, MessagePayload{
-		StationID:   stationID,
-		CmdID:       cmdID,
-		Direction:   "recv",
-		Body:        body,
-		LatencyMs:   latencyMs,
+		StationID: stationID,
+		CmdID:     cmdID,
+		Direction: "recv",
+		Body:      body,
+		LatencyMs: latencyMs,
 	})
 
 	// 写入消息日志

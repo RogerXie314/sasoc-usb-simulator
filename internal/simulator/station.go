@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/usb-simulator/internal/protocol"
@@ -43,15 +44,15 @@ type VirusLib struct {
 
 // UpgradeTask 升级任务
 type UpgradeTask struct {
-	TaskID      string  `json:"taskId"`                // 升级任务标识（=下发请求108的msgId）
-	VirusType   int     `json:"virusType"`
-	Version     string  `json:"version"`
-	DownloadURL string  `json:"downloadUrl"`
-	Checksum    string  `json:"checksum"`
-	Status      string  `json:"status"` // running / completed / failed
-	Progress    int     `json:"progress"`
-	IsRunning   bool    `json:"isRunning"`
-	ErrorMsg    string  `json:"errorMsg,omitempty"`
+	TaskID      string `json:"taskId"` // 升级任务标识（=下发请求108的msgId）
+	VirusType   int    `json:"virusType"`
+	Version     string `json:"version"`
+	DownloadURL string `json:"downloadUrl"`
+	Checksum    string `json:"checksum"`
+	Status      string `json:"status"` // running / completed / failed
+	Progress    int    `json:"progress"`
+	IsRunning   bool   `json:"isRunning"`
+	ErrorMsg    string `json:"errorMsg,omitempty"`
 }
 
 // SimStation 模拟安检站
@@ -80,9 +81,9 @@ type SimStation struct {
 	CompressEnabled bool `json:"compressEnabled"`
 
 	// 业务数据
-	VirusLibs   []VirusLib  `json:"virusLibs"`
-	Cabinet     *Cabinet    `json:"cabinet"`
-	Resources   Resources   `json:"resources"`
+	VirusLibs   []VirusLib   `json:"virusLibs"`
+	Cabinet     *Cabinet     `json:"cabinet"`
+	Resources   Resources    `json:"resources"`
 	UpgradeTask *UpgradeTask `json:"upgradeTask"`
 
 	// 内部字段
@@ -96,9 +97,12 @@ type SimStation struct {
 	// 编码选项缓存
 	encodeOpts protocol.EncodeOptions
 
+	// 重连守卫：确保同一时刻只有一个 reconnectLoop 在运行
+	reconnecting atomic.Bool
+
 	// 消息统计
-	MsgSent     int64 `json:"msgSent"`
-	MsgReceived int64 `json:"msgReceived"`
+	MsgSent       int64     `json:"msgSent"`
+	MsgReceived   int64     `json:"msgReceived"`
 	LastHeartbeat time.Time `json:"lastHeartbeat"`
 
 	// 状态变更回调（由 Hub 注入，用于通知前端 WebSocket）
@@ -199,6 +203,7 @@ func (s *SimStation) Stop() error {
 
 	s.State = StateIdle
 	s.DeviceID = 0
+	s.reconnecting.Store(false) // 重置重连守卫，确保 Restart 后可以重连
 	if oldState != StateIdle {
 		// 在锁外调用回调避免死锁
 		go func() {
@@ -311,7 +316,14 @@ func (s *SimStation) connectAndRegister() error {
 }
 
 // reconnectLoop 重连循环（60 秒间隔）
+// 使用 CAS 守卫确保每个站点同一时刻只有一个重连 goroutine 在运行
 func (s *SimStation) reconnectLoop() {
+	if !s.reconnecting.CompareAndSwap(false, true) {
+		// 已有 reconnectLoop 在运行，直接退出
+		return
+	}
+	defer s.reconnecting.Store(false)
+
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
 
@@ -325,6 +337,9 @@ func (s *SimStation) reconnectLoop() {
 			if err == nil {
 				return // 重连成功
 			}
+			// 重连失败：connectAndRegister 内部会 go s.reconnectLoop()
+			// 但由于 CAS 守卫，那个新 goroutine 会直接返回（因为当前还在运行）
+			// 所以由当前循环继续重试，不会产生 goroutine 泄漏
 		}
 	}
 }

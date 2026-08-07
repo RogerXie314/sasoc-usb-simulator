@@ -31,7 +31,6 @@ func SetupRouter(h *hub.Hub, cfg *config.Config) *gin.Engine {
 		})
 		stationHandler := newStationHandler(h)
 		usbHandler := newUsbPluginHandler(h)
-		pressureHandler := newPressureHandler(h)
 		debugHandler := newProtocolDebugHandler(h)
 		cfgHandler := newConfigHandler(h)
 
@@ -47,6 +46,12 @@ func SetupRouter(h *hub.Hub, cfg *config.Config) *gin.Engine {
 		v1.POST("/stations", stationHandler.createStation)
 		// 前端: POST /stations/batch  →  批量创建
 		v1.POST("/stations/batch", stationHandler.batchCreateStations)
+		// 前端: POST /stations/start-all  →  全部上线
+		v1.POST("/stations/start-all", stationHandler.startAllStations)
+		// 前端: POST /stations/stop-all  →  全部下线
+		v1.POST("/stations/stop-all", stationHandler.stopAllStations)
+		// 前端: GET /stations/stats  →  聚合统计
+		v1.GET("/stations/stats", stationHandler.getStationStats)
 		// 前端: POST /stations/:sn/:action(start|stop|restart)  →  启停
 		v1.POST("/stations/:sn/:action", stationHandler.stationAction)
 		// 前端: POST /stations/:sn/command  →  发送协议命令
@@ -116,15 +121,6 @@ func SetupRouter(h *hub.Hub, cfg *config.Config) *gin.Engine {
 			usbPlug.GET("/read/:usbId", usbHandler.readUsb)
 			usbPlug.POST("/write/:usbId", usbHandler.writeUsb)
 			usbPlug.POST("/batch-write", usbHandler.batchWrite)
-		}
-
-		// ---- 压力测试 ----
-		pressure := v1.Group("/pressure")
-		{
-			pressure.POST("/start", pressureHandler.startPressure)
-			pressure.POST("/stop", pressureHandler.stopPressure)
-			pressure.GET("/status", pressureHandler.getStatus)
-			pressure.GET("/report", pressureHandler.getReport)
 		}
 
 		// ---- 协议调试 ----

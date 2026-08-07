@@ -25,9 +25,12 @@ Thumbs.db
 Desktop.ini
 nul
 
+# DuMate
+.dumate/
+
 # Build output
-/dist/
-/build/
+build/
+dist/
 
 # Go
 vendor/

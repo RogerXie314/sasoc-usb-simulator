@@ -62,22 +62,6 @@ html,body,#app{height:100%;font-family:'Microsoft YaHei','PingFang SC',sans-seri
 .page-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
 .page-header h2{font-size:18px;color:#303133}
 
-/* ===== Pressure Test ===== */
-.metric-cards{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:20px}
-.metric-card{background:#fff;border-radius:8px;padding:20px;text-align:center;box-shadow:0 2px 12px rgba(0,0,0,.06)}
-.metric-card .metric-label{font-size:13px;color:#909399;margin-bottom:8px}
-.metric-card .metric-value{font-size:24px;font-weight:700;color:#303133}
-.metric-card .metric-value.ok{color:#67c23a}
-.metric-card .metric-value.warn{color:#e6a23c}
-.metric-card .metric-value.err{color:#f56c6c}
-
-.simple-bar{height:20px;background:#ebeef5;border-radius:10px;overflow:hidden;margin-top:8px}
-.simple-bar .fill{height:100%;border-radius:10px;transition:width .6s ease;background:linear-gradient(90deg,#409eff,#67c23a)}
-.simple-bar .fill.warn{background:linear-gradient(90deg,#e6a23c,#f56c6c)}
-
-.progress-section{background:#fff;border-radius:8px;padding:20px;box-shadow:0 2px 12px rgba(0,0,0,.06);margin-bottom:16px}
-.progress-section h3{margin-bottom:12px;font-size:15px;color:#303133}
-
 /* ===== Protocol Debug ===== */
 .hex-output{background:#1e1e1e;color:#d4d4d4;padding:12px;border-radius:4px;font-family:Consolas,'Courier New',monospace;font-size:13px;white-space:pre-wrap;word-break:break-all;max-height:200px;overflow-y:auto;line-height:1.6}
 .header-table{margin-bottom:12px}
@@ -87,13 +71,13 @@ html,body,#app{height:100%;font-family:'Microsoft YaHei','PingFang SC',sans-seri
 
 /* ===== Responsive ===== */
 @media(max-width:768px){
-  .stat-cards,.metric-cards{grid-template-columns:repeat(2,1fr)}
+  .stat-cards{grid-template-columns:repeat(2,1fr)}
   .app-sidebar{width:64px}
   .app-sidebar .el-menu-item span{display:none}
   .app-content{margin-left:64px}
 }
 @media(max-width:480px){
-  .stat-cards,.metric-cards{grid-template-columns:1fr}
+  .stat-cards{grid-template-columns:1fr}
 }
 
 /* ===== Misc ===== */
@@ -179,10 +163,6 @@ html,body,#app{height:100%;font-family:'Microsoft YaHei','PingFang SC',sans-seri
         <el-menu-item index="/debug">
           <el-icon><Connection /></el-icon>
           <span>协议调试</span>
-        </el-menu-item>
-        <el-menu-item index="/pressure">
-          <el-icon><DataLine /></el-icon>
-          <span>压力测试</span>
         </el-menu-item>
         <el-menu-item index="/log">
           <el-icon><Document /></el-icon>
@@ -337,15 +317,15 @@ const DashboardPage = {
           <el-icon class="stat-icon"><ChatDotRound /></el-icon>
         </div>
         <div class="stat-card">
-          <div class="stat-label">压测状态</div>
-          <div class="stat-value" :class="stats.pressureRunning?'danger':'success'">{{stats.pressureRunning?'运行中':'空闲'}}</div>
-          <el-icon class="stat-icon"><DataLine /></el-icon>
+          <div class="stat-label">离线设备数</div>
+          <div class="stat-value" :class="stats.offlineDevices>0?'warning':'success'">{{stats.offlineDevices}}</div>
+          <el-icon class="stat-icon"><Warning /></el-icon>
         </div>
       </div>
 
       <div style="display:flex;gap:12px;margin-bottom:20px">
         <el-button type="primary" @click="goCreate"><el-icon><Plus /></el-icon>创建安检站</el-button>
-        <el-button type="success" @click="goPressure"><el-icon><VideoPlay /></el-icon>启动压测</el-button>
+        <el-button type="success" @click="goStation"><el-icon><OfficeBuilding /></el-icon>安检站管理</el-button>
       </div>
 
       <div class="event-feed">
@@ -361,7 +341,7 @@ const DashboardPage = {
   `,
   data() {
     return {
-      stats: { onlineDevices: 0, usbCount: 0, todayMessages: 0, pressureRunning: false },
+      stats: { onlineDevices: 0, usbCount: 0, todayMessages: 0, offlineDevices: 0 },
       events: [],
       unsub: null,
       timer: null
@@ -369,17 +349,14 @@ const DashboardPage = {
   },
   methods: {
     goCreate() { this.$router.push('/station'); },
-    goPressure() { this.$router.push('/pressure'); },
+    goStation() { this.$router.push('/station'); },
     async loadStats() {
       try {
         const [stationsR, usbs] = await Promise.all([apiGet('/stations'), apiGet('/usbs')]);
         const stationList = (stationsR && stationsR.stations) ? stationsR.stations : (Array.isArray(stationsR) ? stationsR : []);
         this.stats.onlineDevices = stationList.filter(s => s.status === 'online').length;
+        this.stats.offlineDevices = stationList.filter(s => s.status !== 'online').length;
         this.stats.usbCount = (usbs||[]).length;
-      } catch {}
-      try {
-        const r = await apiGet('/pressure/status');
-        this.stats.pressureRunning = r && r.running;
       } catch {}
     },
     addEvent(data) {
@@ -396,8 +373,6 @@ const DashboardPage = {
         const cmdName = CMD_MAP[data.cmd_id] || `CMD_${data.cmd_id}`;
         this.events.unshift({ id: Date.now() + Math.random(), time: now, tag: '消息', tagType: 'info', msg: `${data.sn||''} ${cmdName} ${data.direction||''}` });
         this.stats.todayMessages++;
-      } else if (data.type === 'pressure_metric') {
-        this.events.unshift({ id: Date.now() + Math.random(), time: now, tag: '压测', tagType: 'warning', msg: data.message || JSON.stringify(data) });
       } else {
         this.events.unshift({ id: Date.now() + Math.random(), time: now, tag: '事件', tagType: 'info', msg: data.message || JSON.stringify(data) });
       }
@@ -419,9 +394,39 @@ const DashboardPage = {
 const StationPage = {
   template: `
     <div>
+      <!-- 聚合统计栏 -->
+      <div class="stat-cards">
+        <div class="stat-card">
+          <div class="stat-label">总安检站数</div>
+          <div class="stat-value">{{stats.total}}</div>
+          <el-icon class="stat-icon"><OfficeBuilding /></el-icon>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">在线设备</div>
+          <div class="stat-value success">{{stats.online}}</div>
+          <el-icon class="stat-icon"><Monitor /></el-icon>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">总发送消息</div>
+          <div class="stat-value warning">{{stats.totalSent}}</div>
+          <el-icon class="stat-icon"><ChatDotRound /></el-icon>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">总接收消息</div>
+          <div class="stat-value">{{stats.totalReceived}}</div>
+          <el-icon class="stat-icon"><ChatLineSquare /></el-icon>
+        </div>
+      </div>
+
       <div class="page-header">
         <h2>安检站管理</h2>
         <div>
+          <el-button type="success" @click="startAllStations" :loading="startingAll" :disabled="startingAll">
+            <el-icon><VideoPlay /></el-icon>全部上线
+          </el-button>
+          <el-button type="danger" @click="stopAllStations" :loading="stoppingAll" :disabled="stoppingAll">
+            <el-icon><VideoPause /></el-icon>全部下线
+          </el-button>
           <el-button type="primary" @click="showBatchDialog"><el-icon><Plus /></el-icon>批量创建</el-button>
           <el-button type="success" @click="showCreateDialog"><el-icon><Plus /></el-icon>创建安检站</el-button>
           <el-button type="danger" @click="batchDelete" :disabled="selectedStations.length===0" :loading="batchDeleting">
@@ -621,6 +626,10 @@ const StationPage = {
     return {
       stations: [],
       loading: false,
+      stats: { total:0, online:0, offline:0, totalSent:0, totalReceived:0 },
+      startingAll: false,
+      stoppingAll: false,
+      statsTimer: null,
       createVisible: false,
       batchVisible: false,
       creating: false,
@@ -714,6 +723,52 @@ const StationPage = {
       const doorText = {0:'未知',1:'关闭',2:'开启',3:'开启超时',4:'故障'}[ds] || '未知';
       ElementPlus.ElMessage.info(`柜门 ${idx}：${doorText}${hasUsb ? '，已存入U盘：' + sn : ''}`);
     },
+    async loadStats() {
+      try {
+        const r = await apiGet('/stations/stats');
+        if (r) {
+          this.stats = {
+            total: r.total || 0,
+            online: r.online || 0,
+            offline: r.offline || 0,
+            totalSent: r.totalSent || 0,
+            totalReceived: r.totalReceived || 0
+          };
+        }
+      } catch {}
+    },
+    async startAllStations() {
+      try {
+        await ElementPlus.ElMessageBox.confirm('确定启动所有空闲安检站？将分批启动（每批10个）。', '全部上线', { type: 'info' });
+      } catch { return; }
+      this.startingAll = true;
+      try {
+        const r = await apiPost('/stations/start-all');
+        ElementPlus.ElMessage.success(r.message || '启动指令已发送');
+        // 延迟刷新，等待站点逐步上线
+        setTimeout(() => { this.loadStations(); this.loadStats(); }, 3000);
+        setTimeout(() => { this.loadStations(); this.loadStats(); }, 8000);
+      } catch (e) {
+        ElementPlus.ElMessage.error('启动失败: ' + e.message);
+      } finally {
+        this.startingAll = false;
+      }
+    },
+    async stopAllStations() {
+      try {
+        await ElementPlus.ElMessageBox.confirm('确定停止所有运行中的安检站？', '全部下线', { type: 'warning' });
+      } catch { return; }
+      this.stoppingAll = true;
+      try {
+        const r = await apiPost('/stations/stop-all');
+        ElementPlus.ElMessage.success(r.message || '停止指令已发送');
+        setTimeout(() => { this.loadStations(); this.loadStats(); }, 1000);
+      } catch (e) {
+        ElementPlus.ElMessage.error('停止失败: ' + e.message);
+      } finally {
+        this.stoppingAll = false;
+      }
+    },
     async loadStations() {
       this.loading = true;
       try {
@@ -727,6 +782,7 @@ const StationPage = {
         }
       } catch (e) { ElementPlus.ElMessage.error('加载失败: ' + e.message); }
       finally { this.loading = false; }
+      this.loadStats();
     },
     async loadGlobalConfig() {
       try {
@@ -930,11 +986,14 @@ const StationPage = {
   mounted() {
     this.loadStations();
     this.loadGlobalConfig();
+    this.loadStats();
     this.unsub = wsManager.onMessage(this.handleWs);
     // 定时轮询兜底：每15秒刷新一次站点状态，确保 WebSocket 事件丢失时也能更新
     this._pollTimer = setInterval(() => { this.loadStations(); }, 15000);
+    // 每5秒刷新聚合统计
+    this.statsTimer = setInterval(() => { this.loadStats(); }, 5000);
   },
-  beforeUnmount() { if (this.unsub) this.unsub(); if (this._pollTimer) clearInterval(this._pollTimer); }
+  beforeUnmount() { if (this.unsub) this.unsub(); if (this._pollTimer) clearInterval(this._pollTimer); if (this.statsTimer) clearInterval(this.statsTimer); }
 };
 
 // ----- USB Plugin -----
@@ -1486,183 +1545,6 @@ const DebugPage = {
   mounted() { this.loadStations(); }
 };
 
-// ----- Pressure Test -----
-const PressurePage = {
-  template: `
-    <div>
-      <div class="page-header"><h2>压力测试</h2></div>
-
-      <el-card style="margin-bottom:20px">
-        <el-form :model="config" label-width="120px" size="default" inline>
-          <el-form-item label="设备数量"><el-input-number v-model="config.stationCount" :min="1" :max="1000" /></el-form-item>
-          <el-form-item label="SASOC地址"><el-input v-model="config.sasocHost" style="width:150px" /></el-form-item>
-          <el-form-item label="SASOC端口"><el-input-number v-model="config.sasocPort" :min="1" :max="65535" /></el-form-item>
-          <el-form-item label="心跳开关"><el-switch v-model="config.heartbeatEnabled" /></el-form-item>
-          <el-form-item label="持续时间(s)"><el-input-number v-model="config.durationSeconds" :min="10" :max="86400" /></el-form-item>
-          <el-form-item>
-            <el-button type="success" @click="startTest" :loading="starting" :disabled="running">启动压测</el-button>
-            <el-button type="danger" @click="stopTest" :disabled="!running">停止压测</el-button>
-          </el-form-item>
-        </el-form>
-      </el-card>
-
-      <!-- Metrics -->
-      <div class="metric-cards">
-        <div class="metric-card">
-          <div class="metric-label">在线设备</div>
-          <div class="metric-value" :class="metrics.onlineDevices>0?'ok':''">{{metrics.onlineDevices}}</div>
-          <div class="simple-bar"><div class="fill" :style="{width: barPercent(metrics.onlineDevices, config.stationCount)+'%'}"></div></div>
-        </div>
-        <div class="metric-card">
-          <div class="metric-label">注册成功率</div>
-          <div class="metric-value" :class="metrics.registerRate>=90?'ok':metrics.registerRate>=50?'warn':'err'">{{metrics.registerRate}}%</div>
-          <div class="simple-bar"><div class="fill" :class="metrics.registerRate<50?'warn':''" :style="{width: metrics.registerRate+'%'}"></div></div>
-        </div>
-        <div class="metric-card">
-          <div class="metric-label">心跳成功率</div>
-          <div class="metric-value" :class="metrics.heartbeatRate>=90?'ok':metrics.heartbeatRate>=50?'warn':'err'">{{metrics.heartbeatRate}}%</div>
-          <div class="simple-bar"><div class="fill" :class="metrics.heartbeatRate<50?'warn':''" :style="{width: metrics.heartbeatRate+'%'}"></div></div>
-        </div>
-        <div class="metric-card">
-          <div class="metric-label">平均延迟</div>
-          <div class="metric-value" :class="metrics.avgLatency<100?'ok':metrics.avgLatency<500?'warn':'err'">{{metrics.avgLatency}}ms</div>
-        </div>
-      </div>
-
-      <!-- Progress -->
-      <div v-if="running" class="progress-section">
-        <h3>压测进行中...</h3>
-        <el-progress :percentage="progress" :stroke-width="20" :format="() => progress + '%'" />
-        <div style="margin-top:8px;font-size:13px;color:#909399">已运行 {{elapsed}}s / 共 {{config.durationSeconds}}s</div>
-      </div>
-
-      <!-- Report -->
-      <el-card v-if="report" header="压测报告" style="margin-top:20px">
-        <el-descriptions :column="2" border>
-          <el-descriptions-item label="总设备数">{{report.totalStations}}</el-descriptions-item>
-          <el-descriptions-item label="成功注册">{{report.registeredStations}}</el-descriptions-item>
-          <el-descriptions-item label="注册成功率">{{report.registerRate}}%</el-descriptions-item>
-          <el-descriptions-item label="心跳成功率">{{report.heartbeatRate}}%</el-descriptions-item>
-          <el-descriptions-item label="平均延迟">{{report.avgLatency}}ms</el-descriptions-item>
-          <el-descriptions-item label="总消息数">{{report.totalMessages}}</el-descriptions-item>
-          <el-descriptions-item label="错误数">{{report.errorCount}}</el-descriptions-item>
-          <el-descriptions-item label="持续时间">{{report.duration}}s</el-descriptions-item>
-        </el-descriptions>
-      </el-card>
-    </div>
-  `,
-  data() {
-    return {
-      config: { stationCount:10, sasocHost:'192.168.1.1', sasocPort:4567, heartbeatEnabled:true, durationSeconds:60 },
-      running: false,
-      starting: false,
-      metrics: { onlineDevices:0, registerRate:0, heartbeatRate:0, avgLatency:0 },
-      progress: 0,
-      elapsed: 0,
-      report: null,
-      unsub: null,
-      pollTimer: null
-    };
-  },
-  methods: {
-    barPercent(v, total) { return total > 0 ? Math.min(100, Math.round(v / total * 100)) : 0; },
-    async startTest() {
-      this.starting = true;
-      try {
-        await apiPost('/pressure/start', this.config);
-        this.running = true;
-        this.report = null;
-        this.progress = 0;
-        this.elapsed = 0;
-        this.startPolling();
-      } catch (e) { ElementPlus.ElMessage.error('启动失败: ' + e.message); }
-      finally { this.starting = false; }
-    },
-    async stopTest() {
-      try {
-        await apiPost('/pressure/stop');
-        this.running = false;
-        this.stopPolling();
-        this.loadStatus();
-      } catch (e) { ElementPlus.ElMessage.error('停止失败: ' + e.message); }
-    },
-    startPolling() {
-      this.stopPolling();
-      this.pollTimer = setInterval(() => {
-        this.loadStatus();
-        if (this.running) {
-          this.elapsed++;
-          this.progress = Math.min(100, Math.round(this.elapsed / this.config.durationSeconds * 100));
-        }
-      }, 1000);
-    },
-    stopPolling() {
-      if (this.pollTimer) { clearInterval(this.pollTimer); this.pollTimer = null; }
-    },
-    async loadStatus() {
-      try {
-        const r = await apiGet('/pressure/status');
-        if (r) {
-          const wasRunning = this.running;
-          this.running = r.running;
-          var regRate = 0;
-          if (this.config.stationCount > 0) {
-            regRate = Math.round((r.onlineCount || 0) / this.config.stationCount * 10000) / 100;
-          }
-          this.metrics = {
-            onlineDevices: r.onlineCount || 0,
-            registerRate: regRate,
-            heartbeatRate: Math.round((r.heartbeatSuccessRate || 0) * 100) / 100,
-            avgLatency: Math.round((r.avgLatencyMs || 0) * 100) / 100
-          };
-          if (r.running && !wasRunning) {
-            this.startPolling();
-          }
-          if (!r.running && wasRunning) {
-            this.progress = 100;
-            this.stopPolling();
-          }
-        }
-      } catch {}
-    },
-    handleWs(data) {
-      if (data.type === 'pressure_metric') {
-        if (data.payload) {
-          var p = data.payload;
-          if (p.testId !== undefined && this.running) {
-            var regRate = 0;
-            if (this.config.stationCount > 0) {
-              regRate = Math.round((p.onlineCount || 0) / this.config.stationCount * 10000) / 100;
-            }
-            this.metrics = {
-              onlineDevices: p.onlineCount || this.metrics.onlineDevices,
-              registerRate: regRate,
-              heartbeatRate: Math.round((p.heartbeatSuccessRate || 0) * 100) / 100,
-              avgLatency: Math.round((p.avgLatencyMs || 0) * 100) / 100
-            };
-          }
-        }
-      }
-    }
-  },
-  async mounted() {
-    await this.loadStatus();
-    if (this.running) { this.startPolling(); }
-    this.unsub = wsManager.onMessage(this.handleWs);
-    // 加载全局 SASOC 配置作为默认值
-    apiGet('/config').then(r => {
-      if (r) {
-        this.config.sasocHost = r.sasocHost || this.config.sasocHost;
-        this.config.sasocPort = r.sasocPort || this.config.sasocPort;
-      }
-    }).catch(() => {});
-  },
-  beforeUnmount() {
-    this.stopPolling();
-    if (this.unsub) this.unsub();
-  }
-};
-
 // ----- Message Log -----
 const LogPage = {
   template: `
@@ -1812,7 +1694,6 @@ const routes = [
   { path: '/station', component: StationPage },
   { path: '/usb', component: USBPage },
   { path: '/debug', component: DebugPage },
-  { path: '/pressure', component: PressurePage },
   { path: '/log', component: LogPage },
   { path: '/:pathMatch(.*)*', redirect: '/' }
 ];

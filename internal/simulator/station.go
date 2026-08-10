@@ -950,7 +950,26 @@ func (s *SimStation) handleUpgradeIssue(frame *protocol.Frame) {
 	go s.ExecuteUpgrade()
 }
 
-// ExecuteUpgrade 执行升级流程
+func (s *SimStation) sendUpgradeOpLog(operation, message string) {
+	body := map[string]interface{}{
+		"ComputerID": s.SN,
+		"CMDID":      protocol.CmdOperationLog,
+		"CMDVER":     1,
+		"msgId":      generateMsgID(),
+		"CMDContent": map[string]interface{}{
+			"timestamp": time.Now().UnixMilli(),
+			"sn":        s.SN,
+			"operation": operation,
+			"result":    "success",
+			"message":   message,
+		},
+	}
+	if err := s.sendFrame(protocol.CmdOperationLog, body); err != nil {
+		s.logger.Warn("upgrade op-log failed", zap.String("station", s.ID), zap.Error(err))
+	}
+}
+
+// ExecuteUpgrade 执行升级流程（模拟，无真实下载）
 func (s *SimStation) ExecuteUpgrade() {
 	if s.UpgradeTask == nil {
 		return
@@ -958,6 +977,9 @@ func (s *SimStation) ExecuteUpgrade() {
 
 	taskId := s.UpgradeTask.TaskID
 	s.UpgradeTask.IsRunning = true
+
+	// 启动时记录操作日志：收到升级指令
+	s.sendUpgradeOpLog("upgrade", fmt.Sprintf("收到病毒库升级指令，taskId=%s，virusType=%d，version=%s，URL=%s", taskId, s.UpgradeTask.VirusType, s.UpgradeTask.Version, s.UpgradeTask.DownloadURL))
 
 	stages := []struct {
 		progress int
@@ -974,6 +996,8 @@ func (s *SimStation) ExecuteUpgrade() {
 		select {
 		case <-s.ctx.Done():
 			s.UpgradeTask.IsRunning = false
+			// 中断时记录操作日志
+			s.sendUpgradeOpLog("upgrade", fmt.Sprintf("升级中断，taskId=%s，当前进度%d%%", taskId, s.UpgradeTask.Progress))
 			return
 		default:
 		}
@@ -994,8 +1018,16 @@ func (s *SimStation) ExecuteUpgrade() {
 			"msgId":      generateMsgID(),
 			"CMDContent": innerBody,
 		}
-		s.sendFrame(protocol.CmdUpgradeResult, body)
+		if err := s.sendFrame(protocol.CmdUpgradeResult, body); err != nil {
+			s.logger.Warn("upgrade progress report failed", zap.String("station", s.ID), zap.Error(err))
+		}
 
+		// 记录操作日志：进度节点
+		if stage.progress < 100 {
+			s.sendUpgradeOpLog("upgrade", fmt.Sprintf("病毒库升级进度 %d%%：%s，taskId=%s", stage.progress, stage.desc, taskId))
+		}
+
+		// 模拟阶段耗时
 		if stage.delay > 0 {
 			time.Sleep(stage.delay)
 		}
@@ -1016,7 +1048,12 @@ func (s *SimStation) ExecuteUpgrade() {
 		"msgId":      generateMsgID(),
 		"CMDContent": innerBody,
 	}
-	s.sendFrame(protocol.CmdUpgradeResult, body)
+	if err := s.sendFrame(protocol.CmdUpgradeResult, body); err != nil {
+		s.logger.Warn("upgrade completion report failed", zap.String("station", s.ID), zap.Error(err))
+	}
+
+	// 记录操作日志：升级完成
+	s.sendUpgradeOpLog("upgrade", fmt.Sprintf("病毒库升级完成，taskId=%s，virusType=%d，version=%s", taskId, s.UpgradeTask.VirusType, s.UpgradeTask.Version))
 
 	// 更新病毒库版本
 	for i := range s.VirusLibs {
@@ -1026,9 +1063,12 @@ func (s *SimStation) ExecuteUpgrade() {
 		}
 	}
 
-	// 自动信息上报刷新
+	// 自动信息上报刷新版本
 	time.Sleep(1 * time.Second)
 	s.sendInfoReport()
+
+	// 记录操作日志：信息上报已刷新
+	s.sendUpgradeOpLog("upgrade", fmt.Sprintf("信息上报已刷新，展示新版本 %s", s.UpgradeTask.Version))
 
 	// 清除升级任务
 	s.UpgradeTask.IsRunning = false

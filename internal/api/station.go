@@ -906,6 +906,77 @@ func (sh *stationHandler) sendCommand(c *gin.Context) {
 	responseSuccess(c, gin.H{"stationId": station.ID, "command": req.Command, "message": "command sent"})
 }
 
+// simulateUpgrade POST /api/v1/stations/:sn/simulate-upgrade
+// 模拟平台向安检站下发升级指令（被动接收场景）
+func (sh *stationHandler) simulateUpgrade(c *gin.Context) {
+	sn := c.Param("sn")
+	station, exists := sh.hub.GetStationBySN(sn)
+	if !exists {
+		station, exists = sh.hub.GetStation(sn)
+	}
+	if !exists {
+		responseError(c, http.StatusNotFound, "station "+sn+" not found")
+		return
+	}
+
+	if !station.IsOnline() {
+		responseError(c, http.StatusConflict, "station is not online")
+		return
+	}
+
+	var req struct {
+		VirusType   int    `json:"virusType"`
+		Version     string `json:"version"`
+		DownloadURL string `json:"downloadUrl"`
+		Checksum    string `json:"checksum"`
+		TaskID      string `json:"taskId"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		responseError(c, http.StatusBadRequest, "invalid request: "+err.Error())
+		return
+	}
+
+	if req.VirusType <= 0 {
+		req.VirusType = 1
+	}
+	if req.Version == "" {
+		req.Version = "V200R026C02"
+	}
+	if req.TaskID == "" {
+		req.TaskID = fmt.Sprintf("upgrade-%d", time.Now().UnixMilli())
+	}
+
+	// 检查是否已有升级任务
+	if station.GetUpgradeTask() != nil && station.GetUpgradeTask().IsRunning {
+		responseError(c, http.StatusConflict, "upgrade task already running")
+		return
+	}
+
+	// 直接创建升级任务（模拟平台下发 CMD108）
+	task := &simulator.UpgradeTask{
+		TaskID:      req.TaskID,
+		VirusType:   req.VirusType,
+		Version:     req.Version,
+		DownloadURL: req.DownloadURL,
+		Checksum:    req.Checksum,
+		Status:      "running",
+		Progress:    0,
+	}
+	station.SetUpgradeTask(task)
+
+	// 启动升级流程
+	go station.ExecuteUpgrade()
+
+	responseSuccess(c, gin.H{
+		"stationId": station.ID,
+		"sn":        station.SN,
+		"taskId":    req.TaskID,
+		"virusType": req.VirusType,
+		"version":   req.Version,
+		"message":   "upgrade task started (simulated platform dispatch)",
+	})
+}
+
 // deleteStation DELETE /api/v1/stations/:sn
 func (sh *stationHandler) deleteStation(c *gin.Context) {
 	sn := c.Param("sn")

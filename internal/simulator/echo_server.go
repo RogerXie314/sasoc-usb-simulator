@@ -19,7 +19,7 @@ type EchoServer struct {
 	port     int
 	running  atomic.Bool
 
-	mu         sync.RWMutex
+	mu          sync.RWMutex
 	connections map[string]net.Conn // key = remote addr
 	deviceMap   map[uint32]string   // deviceId → station SN
 	nextDevID   uint32
@@ -192,6 +192,10 @@ func (s *EchoServer) handleCommand(conn net.Conn, reqHeader *protocol.Header, bo
 		respBody = wrapCMDContent(innerResp, body)
 	case protocol.CmdUsbReturn:
 		respBody = s.handleUsbReturn(cmdContent)
+	case protocol.CmdUpgradeIssue:
+		// 升级下发(108)：返回接受确认
+		innerResp := map[string]interface{}{"code": protocol.CodeSuccess, "message": "accepted"}
+		respBody = wrapCMDContent(innerResp, body)
 	case protocol.CmdAlarm:
 		// 告警为单向上报，无应答
 		return

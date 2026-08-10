@@ -56,6 +56,8 @@ func SetupRouter(h *hub.Hub, cfg *config.Config) *gin.Engine {
 		v1.POST("/stations/:sn/:action", stationHandler.stationAction)
 		// 前端: POST /stations/:sn/command  →  发送协议命令
 		v1.POST("/stations/:sn/command", stationHandler.sendCommand)
+		// 前端: POST /stations/:sn/simulate-upgrade → 模拟平台下发升级（被动接收场景）
+		v1.POST("/stations/:sn/simulate-upgrade", stationHandler.simulateUpgrade)
 		// 前端: DELETE /stations/:sn  →  删除
 		v1.DELETE("/stations/:sn", stationHandler.deleteStation)
 

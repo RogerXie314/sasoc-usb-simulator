@@ -96,7 +96,7 @@ html,body,#app{height:100%;font-family:'Microsoft YaHei','PingFang SC',sans-seri
     <div class="logo">
       <span class="dot"></span>
       移动介质安检站模拟测试工具
-      <span class="app-version">V2.5</span>
+      <span class="app-version">V2.6</span>
     </div>
     <div class="header-right">
       <div class="sasoc-config" @click="showSasocDialog" title="点击修改SASOC服务器地址">
@@ -434,6 +434,9 @@ const StationPage = {
           </el-button>
           <el-button type="primary" @click="showBatchDialog"><el-icon><Plus /></el-icon>批量创建</el-button>
           <el-button type="success" @click="showCreateDialog"><el-icon><Plus /></el-icon>创建安检站</el-button>
+          <el-button type="warning" @click="batchUpgrade" :disabled="selectedStations.length===0" :loading="upgradingBatch">
+            <el-icon><Upload /></el-icon>模拟平台下发升级{{selectedStations.length>0?' ('+selectedStations.length+')':''}}
+          </el-button>
           <el-button type="danger" @click="batchDelete" :disabled="selectedStations.length===0" :loading="batchDeleting">
             <el-icon><Delete /></el-icon>批量删除{{selectedStations.length>0?' ('+selectedStations.length+')':''}}
           </el-button>
@@ -672,6 +675,36 @@ const StationPage = {
           <el-button type="primary" @click="submitOpLog">发送日志</el-button>
         </template>
       </el-dialog>
+
+      <!-- Batch Upgrade Dialog -->
+      <el-dialog v-model="upgradeBatchVisible" title="批量升级下发" width="520px" destroy-on-close>
+        <el-alert type="info" :closable="false" style="margin-bottom:16px">
+          将向 {{selectedStations.length}} 个安检站下发升级指令，升级过程为模拟（无真实下载），平台将收到完整的进度反馈
+        </el-alert>
+        <el-form :model="upgradeBatchForm" label-width="120px" size="default">
+          <el-form-item label="病毒库类型">
+            <el-radio-group v-model="upgradeBatchForm.virusType">
+              <el-radio :value="1">A库</el-radio>
+              <el-radio :value="2">B库</el-radio>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item label="新版本号">
+            <el-input v-model="upgradeBatchForm.version" placeholder="如 V200R026C02" style="width:280px" />
+          </el-form-item>
+          <el-form-item label="下载地址">
+            <el-input v-model="upgradeBatchForm.downloadUrl" placeholder="可选，留空自动生成" />
+          </el-form-item>
+          <el-form-item label="校验值">
+            <el-input v-model="upgradeBatchForm.checksum" placeholder="可选，留空使用默认值" />
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="upgradeBatchVisible=false">取消</el-button>
+          <el-button type="primary" @click="doBatchUpgrade" :loading="upgradingBatch">
+            <el-icon><Upload /></el-icon>开始批量升级
+          </el-button>
+        </template>
+      </el-dialog>
     </div>
   `,
   data() {
@@ -697,6 +730,10 @@ const StationPage = {
       cabinetFaultVisible: false,
       cabinetFaultTarget: null,
       cabinetFaultForm: { mode:'single', doorNo:1, reason:'' },
+      // 批量升级
+      upgradeBatchVisible: false,
+      upgradeBatchForm: { virusType: 1, version: '', downloadUrl: '', checksum: '' },
+      upgradingBatch: false,
       // 告警上报弹窗
       alarmVisible: false,
       alarmTarget: '',
@@ -984,6 +1021,29 @@ const StationPage = {
     },
     handleSelectionChange(rows) {
       this.selectedStations = rows;
+    },
+    async batchUpgrade() {
+      const count = this.selectedStations.length;
+      if (count === 0) { ElementPlus.ElMessage.warning('请先选择安检站'); return; }
+      this.upgradeBatchVisible = true;
+    },
+    async doBatchUpgrade() {
+      const count = this.selectedStations.length;
+      this.upgradingBatch = true;
+      let successCount = 0; let failCount = 0;
+      const snList = this.selectedStations.map(s => s.sn);
+      const results = await Promise.allSettled(snList.map(sn => apiPost(`/stations/${sn}/simulate-upgrade`, {
+        virusType: this.upgradeBatchForm.virusType,
+        version: this.upgradeBatchForm.version,
+        downloadUrl: this.upgradeBatchForm.downloadUrl || undefined,
+        checksum: this.upgradeBatchForm.checksum || undefined,
+      })));
+      for (const r of results) { if (r.status === 'fulfilled') successCount++; else failCount++; }
+      this.upgradingBatch = false;
+      this.upgradeBatchVisible = false;
+      if (failCount === 0) { ElementPlus.ElMessage.success(`已向 ${successCount} 个安检站下发升级指令`); }
+      else { ElementPlus.ElMessage.warning(`成功 ${successCount} 个，失败 ${failCount} 个`); }
+      this.loadStations();
     },
     async batchDelete() {
       const count = this.selectedStations.length;

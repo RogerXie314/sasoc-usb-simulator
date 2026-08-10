@@ -132,10 +132,16 @@ func SetupRouter(h *hub.Hub, cfg *config.Config) *gin.Engine {
 		}
 
 		// ---- 消息日志 ----
-		// 前端: GET /logs  →  查询日志
+		// 前端: GET /logs  ->  查询日志
 		v1.GET("/logs", stationHandler.listLogs)
-		// 前端: DELETE /logs  →  清空日志
+		// 前端: DELETE /logs  ->  清空日志
 		v1.DELETE("/logs", stationHandler.clearLogs)
+
+		// ---- 压力测试 ----
+		pressureHandler := newPressureHandler(h)
+		v1.POST("/pressure/start", pressureHandler.startPressure)
+		v1.POST("/pressure/stop", pressureHandler.stopPressure)
+		v1.GET("/pressure/stats", pressureHandler.getPressureStats)
 	}
 
 	return r

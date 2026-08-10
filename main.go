@@ -29,7 +29,7 @@ import (
 var webFS embed.FS
 
 // AppVersion 应用版本号
-const AppVersion = "V2.4"
+const AppVersion = "V2.5"
 
 // isConsoleAvailable 检测是否有可用的控制台（GUI 模式下没有）
 func isConsoleAvailable() bool {

@@ -242,17 +242,13 @@ func (s *SimStation) ReinitWithNewAddr(host string, port int) {
 // connectAndRegister 建立 TCP 连接并发送注册请求
 // SASOC 返回 PT 格式协议头（与老工具 WL_PORTOCAL_HEAD 一致）
 func (s *SimStation) connectAndRegister() error {
-	oldState := s.State
-	s.State = StateRegister
-	s.notifyStateChange(oldState)
+	s.SetState(StateRegister)
 
 	// 建立 TCP 连接
 	addr := net.JoinHostPort(s.SasocHost, fmt.Sprintf("%d", s.SasocPort))
 	conn, err := net.DialTimeout("tcp", addr, 10*time.Second)
 	if err != nil {
-		oldState = s.State
-		s.State = StateReconnect
-		s.notifyStateChange(oldState)
+		s.SetState(StateReconnect)
 		s.logger.Error("TCP connect failed",
 			zap.String("station", s.ID),
 			zap.Error(err),
@@ -262,27 +258,29 @@ func (s *SimStation) connectAndRegister() error {
 		return fmt.Errorf("connect to %s failed: %w", addr, err)
 	}
 
+	s.mu.Lock()
 	s.conn = conn
+	s.mu.Unlock()
 	s.logger.Info("TCP connected",
 		zap.String("station", s.ID),
 		zap.String("remote", addr),
 	)
 
 	// 更新编码选项（每次发送时生成新的 RandomValue）
+	s.mu.Lock()
 	s.encodeOpts = protocol.EncodeOptions{
 		Encrypt:     s.EncryptEnabled,
 		Compress:    s.CompressEnabled,
 		RandomValue: 0,
 	}
+	s.mu.Unlock()
 
 	// 启动消息接收 goroutine（等待 SASOC 注册响应和后续推送）
 	go s.receiveLoop()
 
 	// 发送注册请求
 	if err := s.sendRegister(); err != nil {
-		oldState = s.State
-		s.State = StateReconnect
-		s.notifyStateChange(oldState)
+		s.SetState(StateReconnect)
 		return fmt.Errorf("register failed: %w", err)
 	}
 
@@ -294,9 +292,7 @@ func (s *SimStation) connectAndRegister() error {
 			s.logger.Info("register response timeout, auto-marking online",
 				zap.String("station", s.ID),
 			)
-			oldState := s.GetState()
 			s.SetState(StateOnline)
-			s.notifyStateChange(oldState)
 
 			// 启动心跳
 			if s.HeartbeatEnabled {
@@ -444,7 +440,15 @@ func (s *SimStation) readExact(buf []byte) (int, error) {
 }
 
 // handleDisconnect 处理断线
+// 增加2秒防抖：网络瞬时抖动时如果2秒内恢复则不上报离线
 func (s *SimStation) handleDisconnect() {
+	// 快速重试一次，确认不是瞬时抖动
+	time.Sleep(2 * time.Second)
+	if s.IsOnline() {
+		// 已自行恢复，无需通知
+		return
+	}
+
 	s.mu.Lock()
 	oldState := s.State
 
@@ -457,7 +461,9 @@ func (s *SimStation) handleDisconnect() {
 	s.DeviceID = 0
 	s.mu.Unlock()
 
-	s.notifyStateChange(oldState)
+	if oldState == StateOnline {
+		s.notifyStateChange(oldState)
+	}
 
 	s.logger.Warn("connection lost, starting reconnect", zap.String("station", s.ID))
 	go s.reconnectLoop()
@@ -620,6 +626,13 @@ func (s *SimStation) SetUpgradeTask(task *UpgradeTask) {
 	s.UpgradeTask = task
 }
 
+// GetDeviceID 获取设备ID
+func (s *SimStation) GetDeviceID() uint32 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.DeviceID
+}
+
 // SetDeviceID 设置设备ID
 func (s *SimStation) SetDeviceID(id uint32) {
 	s.mu.Lock()
@@ -717,6 +730,13 @@ func (s *SimStation) StartHeartbeatLoop() {
 			}
 			if err := s.sendFrame(protocol.CmdHeartbeat, body); err != nil {
 				s.logger.Error("heartbeat send failed", zap.String("station", s.ID), zap.Error(err))
+				// 心跳发送失败说明连接已不可靠，主动关闭触发统一重连
+				s.mu.Lock()
+				if s.conn != nil {
+					s.conn.Close()
+				}
+				s.mu.Unlock()
+				return
 			}
 		}
 	}
@@ -751,16 +771,12 @@ func (s *SimStation) handleRegisterResponse(frame *protocol.Frame) {
 		s.logger.Warn("marking station online despite decode failure (SASOC accepted registration)",
 			zap.String("station", s.ID),
 		)
-		oldState := s.State
-		s.mu.Lock()
-		s.State = StateOnline
+		s.SetState(StateOnline)
 		// 从包头 devID 提取设备ID
-		if s.DeviceID == 0 && frame.Header.DevID > 0 {
-			s.DeviceID = frame.Header.DevID
-			s.logger.Info("deviceId from header (decode failed path)", zap.Uint32("deviceId", s.DeviceID))
+		if s.GetDeviceID() == 0 && frame.Header.DevID > 0 {
+			s.SetDeviceID(frame.Header.DevID)
+			s.logger.Info("deviceId from header (decode failed path)", zap.Uint32("deviceId", s.GetDeviceID()))
 		}
-		s.mu.Unlock()
-		s.notifyStateChange(oldState)
 
 		// 启动心跳
 		if s.HeartbeatEnabled {
@@ -796,34 +812,24 @@ func (s *SimStation) handleRegisterResponse(frame *protocol.Frame) {
 		data, _ := cmdContent["data"].(map[string]interface{})
 		if data != nil {
 			if devid, ok := data["deviceId"].(float64); ok {
-				s.mu.Lock()
-				s.DeviceID = uint32(devid)
-				s.mu.Unlock()
+				s.SetDeviceID(uint32(devid))
 			}
 		} else {
 			// 兼容：deviceId 直接在 CMDContent 下
 			if devid, ok := cmdContent["deviceId"].(float64); ok {
-				s.mu.Lock()
-				s.DeviceID = uint32(devid)
-				s.mu.Unlock()
+				s.SetDeviceID(uint32(devid))
 			}
 		}
 		// 补充：如果 JSON 中未获取到 deviceId，从包头 devID 字段提取
-		if s.DeviceID == 0 && frame.Header.DevID > 0 {
-			s.mu.Lock()
-			s.DeviceID = frame.Header.DevID
-			s.mu.Unlock()
-			s.logger.Info("deviceId from header", zap.Uint32("deviceId", s.DeviceID))
+		if s.GetDeviceID() == 0 && frame.Header.DevID > 0 {
+			s.SetDeviceID(frame.Header.DevID)
+			s.logger.Info("deviceId from header", zap.Uint32("deviceId", s.GetDeviceID()))
 		}
-		oldState := s.State
-		s.mu.Lock()
-		s.State = StateOnline
-		s.mu.Unlock()
+		s.SetState(StateOnline)
 		s.logger.Info("register success",
 			zap.String("station", s.ID),
-			zap.Uint32("deviceId", s.DeviceID),
+			zap.Uint32("deviceId", s.GetDeviceID()),
 		)
-		s.notifyStateChange(oldState)
 		// 启动心跳
 		if s.HeartbeatEnabled {
 			go s.StartHeartbeatLoop()
@@ -834,22 +840,21 @@ func (s *SimStation) handleRegisterResponse(frame *protocol.Frame) {
 			s.sendInfoReport()
 		}()
 
+	case protocol.CodeNotRegistered:
+		// 未注册：等待 5 秒后重新发送注册请求
+		go func() {
+			time.Sleep(5 * time.Second)
+			if err := s.sendRegister(); err != nil {
+				s.logger.Warn("re-register failed", zap.String("station", s.ID), zap.Error(err))
+			}
+		}()
+
 	case protocol.CodeOverCapacity:
 		s.logger.Error("register rejected: over capacity", zap.String("station", s.ID))
 		s.SetState(StateIdle)
 
-	case protocol.CodeNotRegistered:
-		s.logger.Warn("not registered, re-registering", zap.String("station", s.ID))
-		go func() {
-			time.Sleep(5 * time.Second)
-			s.mu.Lock()
-			s.sendRegister()
-			s.mu.Unlock()
-		}()
-
 	default:
-		s.logger.Error("register failed", zap.String("station", s.ID), zap.Float64("code", code))
-		s.SetState(StateReconnect)
+		s.logger.Warn("register response unknown code", zap.String("station", s.ID), zap.Int("code", int(code)))
 	}
 }
 

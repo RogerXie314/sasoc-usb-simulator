@@ -86,6 +86,7 @@ html,body,#app{height:100%;font-family:'Microsoft YaHei','PingFang SC',sans-seri
 .fade-enter-active,.fade-leave-active{transition:opacity .2s}
 .fade-enter-from,.fade-leave-to{opacity:0}
 .code-textarea textarea{font-family:Consolas,'Courier New',monospace!important;font-size:13px!important;line-height:1.5!important}
+.danger-text{color:#f56c6c}
 </style>
 </head>
 <body>
@@ -95,7 +96,7 @@ html,body,#app{height:100%;font-family:'Microsoft YaHei','PingFang SC',sans-seri
     <div class="logo">
       <span class="dot"></span>
       移动介质安检站模拟测试工具
-      <span class="app-version">V2.2</span>
+      <span class="app-version">V2.5</span>
     </div>
     <div class="header-right">
       <div class="sasoc-config" @click="showSasocDialog" title="点击修改SASOC服务器地址">
@@ -167,6 +168,10 @@ html,body,#app{height:100%;font-family:'Microsoft YaHei','PingFang SC',sans-seri
         <el-menu-item index="/log">
           <el-icon><Document /></el-icon>
           <span>消息日志</span>
+        </el-menu-item>
+        <el-menu-item index="/pressure">
+          <el-icon><DataLine /></el-icon>
+          <span>压力测试</span>
         </el-menu-item>
       </el-menu>
     </aside>
@@ -620,6 +625,53 @@ const StationPage = {
           <el-button type="danger" @click="applyCabinetFault">注入故障</el-button>
         </template>
       </el-dialog>
+
+      <!-- Alarm Dialog -->
+      <el-dialog v-model="alarmVisible" title="告警上报" width="460px" destroy-on-close>
+        <el-form :model="alarmForm" label-width="100px" size="default">
+          <el-form-item label="安检站"><el-input :model-value="alarmTarget" disabled /></el-form-item>
+          <el-form-item label="告警类型">
+            <el-select v-model="alarmForm.alarmType" style="width:100%">
+              <el-option v-for="opt in alarmTypeOptions" :key="opt.value"
+                :label="opt.label + ' (' + opt.value + ') [' + opt.level + ']'"
+                :value="opt.value" />
+            </el-select>
+          </el-form-item>
+          <template v-if="alarmForm.alarmType==='MALWARE_DETECTED'">
+            <el-form-item label="病毒名称"><el-input v-model="alarmForm.virusName" placeholder="如 Trojan.Generic" /></el-form-item>
+            <el-form-item label="病毒类型"><el-input v-model="alarmForm.virusType" placeholder="如 trojan" /></el-form-item>
+            <el-form-item label="文件名"><el-input v-model="alarmForm.fileName" placeholder="如 unknown.exe" /></el-form-item>
+            <el-form-item label="文件哈希"><el-input v-model="alarmForm.fileHash" placeholder="如 0000000000000000" /></el-form-item>
+          </template>
+        </el-form>
+        <template #footer>
+          <el-button @click="alarmVisible=false">取消</el-button>
+          <el-button type="danger" @click="submitAlarm">发送告警</el-button>
+        </template>
+      </el-dialog>
+
+      <!-- Operation Log Dialog -->
+      <el-dialog v-model="logVisible" title="操作日志上报" width="460px" destroy-on-close>
+        <el-form :model="logForm" label-width="100px" size="default">
+          <el-form-item label="安检站"><el-input :model-value="logTarget" disabled /></el-form-item>
+          <el-form-item label="操作类型">
+            <el-select v-model="logForm.operation" style="width:100%">
+              <el-option v-for="opt in opTypeOptions" :key="opt.value" :label="opt.label + ' (' + opt.value + ')'" :value="opt.value" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="U盘SN"><el-input v-model="logForm.sn" placeholder="必填" /></el-form-item>
+          <el-form-item label="结果">
+            <el-radio-group v-model="logForm.result">
+              <el-radio value="success">成功</el-radio>
+              <el-radio value="fail">失败</el-radio>
+            </el-radio-group>
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="logVisible=false">取消</el-button>
+          <el-button type="primary" @click="submitOpLog">发送日志</el-button>
+        </template>
+      </el-dialog>
     </div>
   `,
   data() {
@@ -644,7 +696,32 @@ const StationPage = {
       globalSasocPort: 4567,
       cabinetFaultVisible: false,
       cabinetFaultTarget: null,
-      cabinetFaultForm: { mode:'single', doorNo:1, reason:'' }
+      cabinetFaultForm: { mode:'single', doorNo:1, reason:'' },
+      // 告警上报弹窗
+      alarmVisible: false,
+      alarmTarget: '',
+      alarmForm: { alarmType: 'DEVICE_FAULT', virusName: '', virusType: '', fileName: '', fileHash: '' },
+      // 操作日志弹窗
+      logVisible: false,
+      logTarget: '',
+      logForm: { operation: 'insert', sn: '', result: 'success' },
+      // 告警类型选项
+      alarmTypeOptions: [
+        { label: 'U盘非法接入', value: 'USB_ILLEGAL_ACCESS', level: '重要' },
+        { label: 'CPU异常', value: 'CPU_ABNORMAL', level: '重要' },
+        { label: '内存异常', value: 'MEMORY_ABNORMAL', level: '重要' },
+        { label: '硬盘异常', value: 'DISK_ABNORMAL', level: '重要' },
+        { label: '管控柜故障', value: 'DEVICE_FAULT', level: '重要' },
+        { label: '发现病毒', value: 'MALWARE_DETECTED', level: '紧急' },
+      ],
+      // 操作类型选项
+      opTypeOptions: [
+        { label: '插入U盘', value: 'insert' },
+        { label: '拔出U盘', value: 'remove' },
+        { label: '查毒', value: 'scan' },
+        { label: '杀毒', value: 'kill' },
+        { label: '复制文件', value: 'copy' },
+      ]
     };
   },
   methods: {
@@ -855,23 +932,13 @@ const StationPage = {
           params = { sn: value };
         } catch { return; }
       } else if (cmd === 'alarm') {
-        try {
-          const alarmTypes = ['USB_ILLEGAL_ACCESS','CPU_ABNORMAL','MEMORY_ABNORMAL','DISK_ABNORMAL','DEVICE_FAULT','MALWARE_DETECTED'];
-          const { value: alarmType } = await ElementPlus.ElMessageBox.prompt('告警类型: ' + alarmTypes.join(' / '), '告警上报', { inputPattern: /.+/, inputErrorMessage: '告警类型不能为空' });
-          params = { alarmType };
-          if (alarmType === 'MALWARE_DETECTED') {
-            const { value: vn } = await ElementPlus.ElMessageBox.prompt('病毒名称', '告警详情');
-            const { value: vt } = await ElementPlus.ElMessageBox.prompt('病毒类型', '告警详情');
-            params.virusName = vn; params.virusType = vt; params.fileName = 'unknown'; params.fileHash = '0000';
-          }
-        } catch { return; }
+        this.alarmTarget = row.sn;
+        this.alarmVisible = true;
+        return;
       } else if (cmd === 'operation_log') {
-        try {
-          const ops = ['insert','remove','scan','kill','copy'];
-          const { value: op } = await ElementPlus.ElMessageBox.prompt('操作类型: ' + ops.join(' / '), '操作日志', { inputPattern: /.+/, inputErrorMessage: '操作类型不能为空' });
-          const { value: logSn } = await ElementPlus.ElMessageBox.prompt('U盘SN', '操作日志', { inputPattern: /.+/, inputErrorMessage: 'SN不能为空' });
-          params = { operation: op, sn: logSn, result: 'success' };
-        } catch { return; }
+        this.logTarget = row.sn;
+        this.logVisible = true;
+        return;
       } else if (cmd === 'trigger_upgrade') {
         try {
           const { value: vt } = await ElementPlus.ElMessageBox.prompt('病毒库类型 (1=A / 2=B)', '升级下发', { inputPattern: /^[12]$/, inputErrorMessage: '请输入1或2' });
@@ -882,6 +949,29 @@ const StationPage = {
       try {
         await apiPost(`/stations/${sn}/command`, { command: cmd, params });
         ElementPlus.ElMessage.success(`${cmd} 指令已发送`);
+      } catch (e) { ElementPlus.ElMessage.error('发送失败: ' + e.message); }
+    },
+    async submitAlarm() {
+      const params = { alarmType: this.alarmForm.alarmType };
+      if (this.alarmForm.alarmType === 'MALWARE_DETECTED') {
+        params.virusName = this.alarmForm.virusName || 'Trojan.Generic';
+        params.virusType = this.alarmForm.virusType || 'trojan';
+        params.fileName = this.alarmForm.fileName || 'unknown.exe';
+        params.fileHash = this.alarmForm.fileHash || '0000000000000000';
+      }
+      try {
+        await apiPost(`/stations/${this.alarmTarget}/command`, { command: 'alarm', params });
+        ElementPlus.ElMessage.success('告警上报已发送');
+        this.alarmVisible = false;
+      } catch (e) { ElementPlus.ElMessage.error('发送失败: ' + e.message); }
+    },
+    async submitOpLog() {
+      if (!this.logForm.sn) { ElementPlus.ElMessage.warning('请输入U盘SN'); return; }
+      const params = { operation: this.logForm.operation, sn: this.logForm.sn, result: this.logForm.result };
+      try {
+        await apiPost(`/stations/${this.logTarget}/command`, { command: 'operation_log', params });
+        ElementPlus.ElMessage.success('操作日志已发送');
+        this.logVisible = false;
       } catch (e) { ElementPlus.ElMessage.error('发送失败: ' + e.message); }
     },
     async deleteStation(sn) {
@@ -1686,6 +1776,246 @@ const LogPage = {
   beforeUnmount() { if (this.unsub) this.unsub(); }
 };
 
+// ----- Pressure Test -----
+const PressurePage = {
+  template: `
+    <div>
+      <div class="page-header">
+        <h2>压力测试</h2>
+        <el-button @click="loadStations"><el-icon><Refresh /></el-icon>刷新在线站点</el-button>
+      </div>
+
+      <!-- 统计栏 -->
+      <div class="stat-cards">
+        <div class="stat-card">
+          <div class="stat-label">在线站点数</div>
+          <div class="stat-value success">{{onlineCount}}</div>
+          <el-icon class="stat-icon"><Monitor /></el-icon>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">已发送告警</div>
+          <div class="stat-value" :class="stats.alarmsSent>0?'warning':''">{{stats.alarmsSent||0}}</div>
+          <el-icon class="stat-icon"><Warning /></el-icon>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">已发送日志</div>
+          <div class="stat-value">{{stats.logsSent||0}}</div>
+          <el-icon class="stat-icon"><Document /></el-icon>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">发送错误</div>
+          <div class="stat-value" :class="stats.errors>0?'danger':'success'">{{stats.errors||0}}</div>
+          <el-icon class="stat-icon"><CircleClose /></el-icon>
+        </div>
+      </div>
+
+      <!-- 运行状态 -->
+      <el-card v-if="stats.running" style="margin-bottom:20px" body-style="padding:16px 20px">
+        <div style="display:flex;align-items:center;gap:16px">
+          <el-tag type="success" effect="dark" size="large">运行中</el-tag>
+          <span style="font-size:14px;color:#606266">开始时间: {{stats.startTime}}</span>
+          <span style="font-size:14px;color:#606266">已运行: {{formatElapsed(stats.elapsed)}}</span>
+          <span style="font-size:14px;color:#606266">参与站点: {{stats.stationCount}}</span>
+          <el-button type="danger" @click="stopPressure" style="margin-left:auto">停止压测</el-button>
+        </div>
+      </el-card>
+
+      <!-- 配置区 -->
+      <el-card style="margin-bottom:20px">
+        <template #header><span style="font-weight:600">压测配置</span></template>
+        <el-form :model="form" label-width="120px" size="default">
+          <el-form-item label="在线站点">
+            <span style="color:#909399;font-size:13px">当前在线 {{onlineCount}} 个，将使用前 {{form.stationCount}} 个</span>
+          </el-form-item>
+          <el-form-item label="使用站点数量">
+            <el-input-number v-model="form.stationCount" :min="1" :max="Math.max(onlineCount,1)" style="width:200px" />
+            <span style="margin-left:12px;font-size:12px;color:#909399">留空或0=全部在线站点</span>
+          </el-form-item>
+
+          <el-divider content-position="left">发送内容</el-divider>
+
+          <el-form-item label="发送告警">
+            <el-switch v-model="form.includeAlarms" />
+          </el-form-item>
+          <el-form-item label="告警类型" v-if="form.includeAlarms">
+            <el-checkbox-group v-model="form.alarmTypes">
+              <el-checkbox v-for="opt in alarmOptions" :key="opt.value" :value="opt.value" :label="opt.value">
+                {{opt.label}} [{{opt.level}}]
+              </el-checkbox>
+            </el-checkbox-group>
+          </el-form-item>
+
+          <el-form-item label="发送操作日志">
+            <el-switch v-model="form.includeLogs" />
+          </el-form-item>
+          <el-form-item label="日志类型" v-if="form.includeLogs">
+            <el-checkbox-group v-model="form.logTypes">
+              <el-checkbox v-for="opt in logOptions" :key="opt.value" :value="opt.value" :label="opt.value">
+                {{opt.label}}
+              </el-checkbox>
+            </el-checkbox-group>
+          </el-form-item>
+
+          <el-divider content-position="left">发送频率</el-divider>
+
+          <el-form-item label="每站每秒次数">
+            <el-input-number v-model="form.frequency" :min="1" :max="100" style="width:200px" />
+            <span style="margin-left:12px;font-size:12px;color:#909399">每个站点每秒发送 N 组（告警+日志各一条）</span>
+          </el-form-item>
+          <el-form-item label="持续时间(秒)">
+            <el-input-number v-model="form.duration" :min="0" :max="3600" style="width:200px" />
+            <span style="margin-left:12px;font-size:12px;color:#909399">0 = 持续到手动停止</span>
+          </el-form-item>
+
+          <el-form-item>
+            <el-button type="danger" size="large" @click="startPressure" :disabled="stats.running" :loading="starting">
+              <el-icon><VideoPlay /></el-icon>开始压测
+            </el-button>
+            <el-button type="warning" size="large" @click="stopPressure" :disabled="!stats.running" style="margin-left:12px">
+              <el-icon><VideoPause /></el-icon>停止压测
+            </el-button>
+          </el-form-item>
+        </el-form>
+      </el-card>
+
+      <!-- 实时统计 -->
+      <el-card v-if="stats.running || stats.alarmsSent>0 || stats.logsSent>0">
+        <template #header><span style="font-weight:600">实时统计</span></template>
+        <el-descriptions :column="3" border>
+          <el-descriptions-item label="状态">
+            <el-tag :type="stats.running?'success':'info'" size="small" effect="dark">{{stats.running?'运行中':'已停止'}}</el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="参与站点">{{stats.stationCount||0}}</el-descriptions-item>
+          <el-descriptions-item label="已运行">{{formatElapsed(stats.elapsed)}}</el-descriptions-item>
+          <el-descriptions-item label="告警发送数">
+            <span style="font-size:18px;font-weight:700;color:#e6a23c">{{stats.alarmsSent||0}}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="日志发送数">
+            <span style="font-size:18px;font-weight:700;color:#409eff">{{stats.logsSent||0}}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="错误数">
+            <span style="font-size:18px;font-weight:700" :class="stats.errors>0?'danger-text':''">{{stats.errors||0}}</span>
+          </el-descriptions-item>
+        </el-descriptions>
+      </el-card>
+    </div>
+  `,
+  data() {
+    return {
+      onlineCount: 0,
+      starting: false,
+      stats: {},
+      unsub: null,
+      statsTimer: null,
+      form: {
+        stationCount: 0,
+        alarmTypes: ['USB_ILLEGAL_ACCESS','CPU_ABNORMAL','DEVICE_FAULT'],
+        logTypes: ['insert','scan','kill'],
+        frequency: 1,
+        duration: 0,
+        includeAlarms: true,
+        includeLogs: true,
+      },
+      alarmOptions: [
+        { label: 'U盘非法接入', value: 'USB_ILLEGAL_ACCESS', level: '重要' },
+        { label: 'CPU异常', value: 'CPU_ABNORMAL', level: '重要' },
+        { label: '内存异常', value: 'MEMORY_ABNORMAL', level: '重要' },
+        { label: '硬盘异常', value: 'DISK_ABNORMAL', level: '重要' },
+        { label: '管控柜故障', value: 'DEVICE_FAULT', level: '重要' },
+        { label: '发现病毒', value: 'MALWARE_DETECTED', level: '紧急' },
+      ],
+      logOptions: [
+        { label: '插入U盘', value: 'insert' },
+        { label: '拔出U盘', value: 'remove' },
+        { label: '查毒', value: 'scan' },
+        { label: '杀毒', value: 'kill' },
+        { label: '复制文件', value: 'copy' },
+      ],
+    };
+  },
+  methods: {
+    formatElapsed(s) {
+      if (!s) return '0s';
+      if (s < 60) return s + 's';
+      return Math.floor(s/60) + 'm' + (s%60) + 's';
+    },
+    async loadStations() {
+      try {
+        const r = await apiGet('/stations');
+        let list = [];
+        if (r && r.stations) list = r.stations;
+        else if (Array.isArray(r)) list = r;
+        this.onlineCount = list.filter(s => s.status === 'online').length;
+        if (this.form.stationCount === 0 || this.form.stationCount > this.onlineCount) {
+          this.form.stationCount = this.onlineCount;
+        }
+      } catch {}
+    },
+    async loadStats() {
+      try {
+        const r = await apiGet('/pressure/stats');
+        if (r) this.stats = r;
+      } catch {}
+    },
+    async startPressure() {
+      if (this.onlineCount === 0) {
+        ElementPlus.ElMessage.warning('没有在线站点，请先在安检站管理页面启动站点');
+        return;
+      }
+      if (this.form.includeAlarms && this.form.alarmTypes.length === 0) {
+        ElementPlus.ElMessage.warning('请至少选择一种告警类型');
+        return;
+      }
+      if (this.form.includeLogs && this.form.logTypes.length === 0) {
+        ElementPlus.ElMessage.warning('请至少选择一种日志类型');
+        return;
+      }
+      try {
+        await ElementPlus.ElMessageBox.confirm(
+          `确认开始压测？将使用 ${this.form.stationCount||this.onlineCount} 个在线站点，每站每秒 ${this.form.frequency} 次` +
+          (this.form.duration > 0 ? `，持续 ${this.form.duration} 秒` : '，持续到手动停止'),
+          '压测确认', { type: 'warning' }
+        );
+      } catch { return; }
+
+      this.starting = true;
+      try {
+        const r = await apiPost('/pressure/start', this.form);
+        ElementPlus.ElMessage.success(`压测已启动，使用 ${r.stationCount} 个站点`);
+        this.loadStats();
+      } catch (e) {
+        ElementPlus.ElMessage.error('启动失败: ' + e.message);
+      } finally {
+        this.starting = false;
+      }
+    },
+    async stopPressure() {
+      try {
+        await apiPost('/pressure/stop');
+        ElementPlus.ElMessage.success('压测已停止');
+        this.loadStats();
+      } catch (e) {
+        ElementPlus.ElMessage.error('停止失败: ' + e.message);
+      }
+    },
+    handleWs(data) {
+      if (data.type === 'pressure_stats' && data.payload) {
+        this.stats = data.payload;
+      }
+    }
+  },
+  mounted() {
+    this.loadStations();
+    this.loadStats();
+    this.unsub = wsManager.onMessage(this.handleWs);
+    this.statsTimer = setInterval(this.loadStats, 3000);
+  },
+  beforeUnmount() {
+    if (this.unsub) this.unsub();
+    if (this.statsTimer) clearInterval(this.statsTimer);
+  }
+};
+
 // ============================================================
 // Router & App
 // ============================================================
@@ -1698,6 +2028,7 @@ const routes = [
   { path: '/usb', component: USBPage },
   { path: '/debug', component: DebugPage },
   { path: '/log', component: LogPage },
+  { path: '/pressure', component: PressurePage },
   { path: '/:pathMatch(.*)*', redirect: '/' }
 ];
 

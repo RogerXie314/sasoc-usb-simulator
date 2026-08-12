@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/usb-simulator/internal/protocol"
@@ -20,12 +21,16 @@ func (c *UpgradeCommand) BuildBody(station *simulator.SimStation, params map[str
 	version, _ := params["version"].(string)
 	downloadUrl, _ := params["downloadUrl"].(string)
 	checksum, _ := params["checksum"].(string)
+	upgradeType, _ := params["upgradeType"].(string)
 
 	body := map[string]interface{}{
 		"virusType":   virusType,
 		"version":     version,
 		"downloadUrl": downloadUrl,
 		"checksum":    checksum,
+	}
+	if upgradeType != "" {
+		body["upgradeType"] = upgradeType
 	}
 
 	return body, nil
@@ -43,17 +48,37 @@ func (c *UpgradeCommand) HandleResponse(station *simulator.SimStation, frame *pr
 	switch int(code) {
 	case protocol.CodeSuccess:
 		// 升级命令接收成功，启动升级流程
+		// 提取 msgId 作为 taskId
+		taskId, _ := resp["msgId"].(string)
+		if taskId == "" {
+			taskId = fmt.Sprintf("upgrade-%d", time.Now().UnixMilli())
+		}
 		virusType, _ := cmdContent["virusType"].(float64)
 		version, _ := cmdContent["version"].(string)
 		downloadUrl, _ := cmdContent["downloadUrl"].(string)
 		checksum, _ := cmdContent["checksum"].(string)
 
+		// 判断升级类型
+		upgradeType, _ := cmdContent["upgradeType"].(string)
+		if upgradeType == "" {
+			upgradeType, _ = cmdContent["type"].(string)
+		}
+		if upgradeType == "" {
+			if _, hasPkg := cmdContent["PackageName"]; hasPkg {
+				upgradeType = "software"
+			} else {
+				upgradeType = "virus"
+			}
+		}
+
 		task := &simulator.UpgradeTask{
+			TaskID:      taskId,
+			UpgradeType: upgradeType,
 			VirusType:   int(virusType),
 			Version:     version,
 			DownloadURL: downloadUrl,
 			Checksum:    checksum,
-			Status:      "running",
+			Status:      "downloading",
 			Progress:    0,
 		}
 		station.SetUpgradeTask(task)
@@ -71,11 +96,16 @@ func (c *UpgradeCommand) HandleResponse(station *simulator.SimStation, frame *pr
 
 // BuildUpgradeResultBody 构建升级结果上报体（CMDID=109）
 // 对齐协议 §7.9：taskId 等于下发请求(CMDID=108)的 msgId
+// 对齐真实客户端 SasocUpgradeBridge.cpp:70-126：必须包含 upgradeType
 func BuildUpgradeResultBody(station *simulator.SimStation, taskId string, status string, progress int, params map[string]interface{}) map[string]interface{} {
 	body := map[string]interface{}{
-		"taskId":   taskId,
-		"status":   status,
-		"progress": progress,
+		"taskId": taskId,
+		"status": status,
+	}
+
+	task := station.GetUpgradeTask()
+	if task != nil {
+		body["upgradeType"] = task.UpgradeType
 	}
 
 	if status == "running" {
@@ -83,7 +113,6 @@ func BuildUpgradeResultBody(station *simulator.SimStation, taskId string, status
 	}
 
 	if status == "completed" {
-		task := station.GetUpgradeTask()
 		if task != nil {
 			body["virusType"] = task.VirusType
 			body["version"] = task.Version

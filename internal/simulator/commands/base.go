@@ -72,7 +72,7 @@ func SendCommand(station *simulator.SimStation, cmdID uint32, params map[string]
 	// {ComputerID, CMDID, CMDVER, msgId, CMDContent:{业务字段}}
 	// 心跳(CMDID=100)无需 msgId
 	wrappedBody := map[string]interface{}{
-		"ComputerID": station.SN,
+		"ComputerID": station.ComputerID(),
 		"CMDID":      cmdID,
 		"CMDVER":     1,
 		"CMDContent": innerBody,

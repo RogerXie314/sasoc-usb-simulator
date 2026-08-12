@@ -2,9 +2,13 @@ package simulator
 
 import (
 	"context"
+	crand "crypto/rand"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -23,9 +27,21 @@ const (
 	StateReconnect StationState = "reconnecting"
 )
 
-// generateMsgID 生成消息ID（时间戳+随机数，连接内唯一）
+// generateMsgID 生成消息ID（16字节随机数→32位十六进制，与协议示例格式一致）
 func generateMsgID() string {
-	return fmt.Sprintf("%d-%d", time.Now().UnixNano(), rand.Intn(100000))
+	b := make([]byte, 16)
+	_, _ = crand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// generateUUID 生成模拟 UUID（8-4-4-4-12 格式），模拟真实机器 UUID
+func generateUUID() string {
+	b := make([]byte, 16)
+	_, _ = crand.Read(b)
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant 10
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
 // Resources 资源使用率
@@ -44,7 +60,8 @@ type VirusLib struct {
 
 // UpgradeTask 升级任务
 type UpgradeTask struct {
-	TaskID      string `json:"taskId"` // 升级任务标识（=下发请求108的msgId）
+	TaskID      string `json:"taskId"`      // 升级任务标识（=下发请求108的msgId）
+	UpgradeType string `json:"upgradeType"` // "virus" 或 "software"
 	VirusType   int    `json:"virusType"`
 	Version     string `json:"version"`
 	DownloadURL string `json:"downloadUrl"`
@@ -93,6 +110,7 @@ type SimStation struct {
 	ctx    context.Context
 	msgCh  chan *protocol.Frame // 收到的 S→C 消息
 	logger *zap.Logger
+	uuid   string // 模拟机器 UUID，生成 ComputerID 用
 
 	// 编码选项缓存
 	encodeOpts protocol.EncodeOptions
@@ -140,7 +158,21 @@ func NewSimStation(id, sn, model, version, name string) *SimStation {
 		cancel:    cancel,
 		msgCh:     make(chan *protocol.Frame, 100),
 		logger:    zap.L(),
+		uuid:      generateUUID(),
 	}
+}
+
+// ComputerID 生成符合真实安检站格式的 ComputerID：MAC-UUID-Name
+// 对齐真实客户端 GetComputerId()：snprintf("%s-%s-%s", szMacAddr, szUUID, szHostname)
+func (s *SimStation) ComputerID() string {
+	// 去掉 MAC 中的冒号转小写，对齐真实安检站格式
+	mac := strings.ReplaceAll(strings.ToLower(s.MAC), ":", "-")
+	// 取 Name 的最后一段（主机名），对齐真实格式
+	name := s.Name
+	if name == "" {
+		name = s.ID
+	}
+	return fmt.Sprintf("%s-%s-%s", mac, s.uuid, name)
 }
 
 // RestoreSimStation 从持久化数据恢复模拟安检站
@@ -173,6 +205,7 @@ func RestoreSimStation(id, sn, model, version, ip, mac, name string, deviceID ui
 		cancel:    cancel,
 		msgCh:     make(chan *protocol.Frame, 100),
 		logger:    zap.L(),
+		uuid:      generateUUID(),
 	}
 }
 
@@ -186,6 +219,14 @@ func (s *SimStation) Start() error {
 	s.mu.Unlock()
 
 	return s.connectAndRegister()
+}
+
+// sleepOrCancel 可被取消的 sleep，升级过程中站点被停止时立即返回
+func (s *SimStation) sleepOrCancel(d time.Duration) {
+	select {
+	case <-s.ctx.Done():
+	case <-time.After(d):
+	}
 }
 
 // Stop 停止安检站
@@ -496,10 +537,16 @@ func (s *SimStation) handleFrame(frame *protocol.Frame) {
 
 // sendFrame 发送帧
 // 每次发送时生成新的 RandomValue（与主机卫士 CProtocal::GetRandomKey 一致）
+// 注意：调用方若已持有 s.mu，需使用 sendFrameUnsafe；sendFrame 会加锁，禁止在已加锁时调用。
 func (s *SimStation) sendFrame(cmdID uint32, body interface{}) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	return s.sendFrameUnsafe(cmdID, body)
+}
+
+// sendFrameUnsafe 无锁发送帧（调用方必须已持有 s.mu）
+func (s *SimStation) sendFrameUnsafe(cmdID uint32, body interface{}) error {
 	if s.conn == nil {
 		return fmt.Errorf("not connected")
 	}
@@ -693,7 +740,7 @@ func (s *SimStation) sendRegister() error {
 		"name":    s.Name,
 	}
 	body := map[string]interface{}{
-		"ComputerID": s.SN,
+		"ComputerID": s.ComputerID(),
 		"CMDID":      protocol.CmdRegister,
 		"CMDVER":     1,
 		"msgId":      generateMsgID(),
@@ -718,7 +765,7 @@ func (s *SimStation) StartHeartbeatLoop() {
 			resources := s.GetResources()
 			cabinet := s.GetCabinet()
 			body := map[string]interface{}{
-				"ComputerID": s.SN,
+				"ComputerID": s.ComputerID(),
 				"CMDID":      protocol.CmdHeartbeat,
 				"CMDVER":     1,
 				"CMDContent": map[string]interface{}{
@@ -876,7 +923,7 @@ func (s *SimStation) sendInfoReport() error {
 		"cabinet":   s.Cabinet.ToReportMap(),
 	}
 	body := map[string]interface{}{
-		"ComputerID": s.SN,
+		"ComputerID": s.ComputerID(),
 		"CMDID":      protocol.CmdInfoReport,
 		"CMDVER":     1,
 		"msgId":      generateMsgID(),
@@ -887,11 +934,20 @@ func (s *SimStation) sendInfoReport() error {
 }
 
 // handleUpgradeIssue 处理升级命令下发
-// S→C 下发格式：{CMDID:108, msgId:"...", CMDContent:{virusType, version, downloadUrl, checksum}}
+// S→C 下发格式有两种：
+//   - 对象格式：{CMDID:108, msgId:"...", CMDContent:{...}}
+//   - 数组格式：[{CMDID:108, msgId:"...", CMDContent:{...}}]（真实 SASOC 平台格式）
 func (s *SimStation) handleUpgradeIssue(frame *protocol.Frame) {
+	// 先尝试对象格式，失败则尝试数组格式
 	var req map[string]interface{}
 	if err := frame.DecodeJSONBody(&req); err != nil {
-		return
+		// 数组格式：[{...}]
+		var arr []map[string]interface{}
+		if e2 := frame.DecodeJSONBody(&arr); e2 != nil || len(arr) == 0 {
+			s.logger.Error("CMD108 decode failed (both object and array)", zap.Error(err))
+			return
+		}
+		req = arr[0]
 	}
 
 	// 从 CMDContent 提取业务数据
@@ -900,59 +956,109 @@ func (s *SimStation) handleUpgradeIssue(frame *protocol.Frame) {
 		cmdContent = req // 兼容无包裹格式
 	}
 
+	// msgId 在 req 层面（与 CMDContent 同级），不在 cmdContent 内部
+	taskId, _ := req["msgId"].(string)
+	if taskId == "" {
+		taskId = fmt.Sprintf("upgrade-%d", time.Now().UnixMilli())
+	}
+
+	// 打印收到的 CMD108 完整内容（用于定位问题）
+	reqJSON, _ := json.Marshal(req)
+	cmdJSON, _ := json.Marshal(cmdContent)
+	s.logger.Info("收到 CMD108 升级下发",
+		zap.String("station", s.SN),
+		zap.String("msgId", taskId),
+		zap.ByteString("req", reqJSON),
+		zap.ByteString("cmdContent", cmdJSON),
+	)
+
+	virusType, _ := cmdContent["virusType"].(float64)
+	version, _ := cmdContent["version"].(string)
+	downloadUrl, _ := cmdContent["downloadUrl"].(string)
+	checksum, _ := cmdContent["checksum"].(string)
+
+	// 判断升级类型：对齐真实客户端 SasocUpgradeBridge.cpp:221-266
+	// 判定为软件升级：upgradeType == "software" 或存在 PackageName 字段
+	upgradeType, _ := cmdContent["upgradeType"].(string)
+	if upgradeType == "" {
+		upgradeType, _ = cmdContent["type"].(string) // 兼容旧字段名
+	}
+	if upgradeType == "" {
+		// 通过是否存在 PackageName 判断是否为软件升级
+		if _, hasPkg := cmdContent["PackageName"]; hasPkg {
+			upgradeType = "software"
+		} else {
+			upgradeType = "virus" // 默认病毒库升级
+		}
+	}
+
+	s.mu.Lock()
+
 	// 检查是否已有升级任务
 	if s.UpgradeTask != nil && s.UpgradeTask.IsRunning {
 		// 拒绝，返回 code=3001
 		innerBody := map[string]interface{}{"code": protocol.CodeTaskExclusive, "message": "已有升级任务执行中"}
 		body := map[string]interface{}{
-			"ComputerID": s.SN,
+			"ComputerID": s.ComputerID(),
 			"CMDID":      protocol.CmdUpgradeIssue,
 			"CMDVER":     1,
-			"msgId":      generateMsgID(),
+			"msgId":      taskId,
 			"CMDContent": innerBody,
 		}
-		s.sendFrame(protocol.CmdUpgradeIssue, body)
+		s.sendFrameUnsafe(protocol.CmdUpgradeIssue, body)
+		s.mu.Unlock()
 		return
 	}
 
-	// 接受升级任务，提取 msgId 作为 taskId
-	virusType, _ := cmdContent["virusType"].(float64)
-	version, _ := cmdContent["version"].(string)
-	downloadUrl, _ := cmdContent["downloadUrl"].(string)
-	checksum, _ := cmdContent["checksum"].(string)
-	taskId, _ := cmdContent["msgId"].(string)
-	if taskId == "" {
-		taskId = fmt.Sprintf("upgrade-%d", time.Now().UnixMilli())
-	}
-
+	// 接受升级任务
 	s.UpgradeTask = &UpgradeTask{
 		TaskID:      taskId,
+		UpgradeType: upgradeType,
 		VirusType:   int(virusType),
 		Version:     version,
 		DownloadURL: downloadUrl,
 		Checksum:    checksum,
-		Status:      "running",
+		Status:      "downloading",
 		Progress:    0,
 	}
 
-	// 返回接受
-	innerBody := map[string]interface{}{"code": protocol.CodeSuccess, "message": "success"}
-	body := map[string]interface{}{
-		"ComputerID": s.SN,
-		"CMDID":      protocol.CmdUpgradeIssue,
-		"CMDVER":     1,
-		"msgId":      generateMsgID(),
-		"CMDContent": innerBody,
-	}
-	s.sendFrame(protocol.CmdUpgradeIssue, body)
+	// 1. 先发 CMD109 "downloading" 进度（与真实代码完全一致：先发109再发108响应）
+	s.sendUpgradeResultUnsafe(taskId, "downloading", 0, "virus package downloading")
 
-	// 启动升级流程
+	// 2. 发 CMD108 应答（对齐真实客户端 SasocTcpBuildResponseJson：必须含 ComputerID + CMDVER）
+	respContent := struct {
+		Code    int                    `json:"code"`
+		Message string                 `json:"message"`
+		Data    map[string]interface{} `json:"data"`
+	}{
+		Code:    protocol.CodeSuccess,
+		Message: "success",
+		Data:    map[string]interface{}{},
+	}
+	respBody := struct {
+		ComputerID string      `json:"ComputerID"`
+		CMDID      uint32      `json:"CMDID"`
+		CMDVER     int         `json:"CMDVER"`
+		MsgID      string      `json:"msgId"`
+		CMDContent interface{} `json:"CMDContent"`
+	}{
+		ComputerID: s.ComputerID(),
+		CMDID:      protocol.CmdUpgradeIssue,
+		CMDVER:     1,
+		MsgID:      taskId,
+		CMDContent: respContent,
+	}
+	s.sendFrameUnsafe(protocol.CmdUpgradeIssue, respBody)
+
+	s.mu.Unlock()
+
+	// 启动升级流程（必须在释放锁之后，否则 ExecuteUpgrade 中的 time.Sleep 会阻塞心跳）
 	go s.ExecuteUpgrade()
 }
 
 func (s *SimStation) sendUpgradeOpLog(operation, message string) {
 	body := map[string]interface{}{
-		"ComputerID": s.SN,
+		"ComputerID": s.ComputerID(),
 		"CMDID":      protocol.CmdOperationLog,
 		"CMDVER":     1,
 		"msgId":      generateMsgID(),
@@ -969,7 +1075,88 @@ func (s *SimStation) sendUpgradeOpLog(operation, message string) {
 	}
 }
 
+// sendUpgradeResultUnsafe 发送 CMD109 升级结果上报（无锁版本，调用方必须已持有 s.mu）
+// 严格对齐协议文档 §7.9 示例：
+//
+//	根层只含 CMDID + CMDVER + msgId + CMDContent
+//	CMDContent 含 taskId + status + progress/virusType/version/errorCode + message
+//	msgId 使用普通 UUID（非 taskId-result-status-timestamp 格式）
+//	status 取值：running / completed / failed（文档未定义 downloading / downloaded）
+func (s *SimStation) sendUpgradeResultUnsafe(taskId, status string, progress int, message string) {
+	if taskId == "" {
+		return
+	}
+
+	// CMDContent 按协议 §7.9 进度示例：taskId → status → progress → message
+	// 完成示例：taskId → status → virusType → version
+	// 失败示例：taskId → status → errorCode → message
+	// 对齐真实客户端 SasocUpgradeBridge.cpp:70-126：必须包含 upgradeType
+	content := map[string]interface{}{
+		"taskId": taskId,
+		"status": status,
+	}
+	// upgradeType 必须与真实客户端一致：SasocUpgradeBridge.cpp:89
+	if s.UpgradeTask != nil {
+		content["upgradeType"] = s.UpgradeTask.UpgradeType
+	}
+	if progress >= 0 {
+		content["progress"] = progress
+	}
+	if status == "completed" && s.UpgradeTask != nil {
+		content["virusType"] = s.UpgradeTask.VirusType
+		content["version"] = s.UpgradeTask.Version
+	}
+	if message != "" {
+		content["message"] = message
+	}
+
+	// msgId 格式对齐真实客户端：{taskId}-result-{status}-{timestamp}
+	// SasocUpgradeBridge.cpp:84: snprintf(msgId, "%s-result-%s-%ld", taskId, status, (long)time(NULL))
+	timestamp := time.Now().Unix()
+	msgId := fmt.Sprintf("%s-result-%s-%d", taskId, status, timestamp)
+
+	body := struct {
+		ComputerID string      `json:"ComputerID"`
+		CMDID      uint32      `json:"CMDID"`
+		CMDVER     int         `json:"CMDVER"`
+		MsgID      string      `json:"msgId"`
+		CMDContent interface{} `json:"CMDContent"`
+	}{
+		ComputerID: s.ComputerID(),
+		CMDID:      protocol.CmdUpgradeResult,
+		CMDVER:     1,
+		MsgID:      msgId,
+		CMDContent: content,
+	}
+
+	// 打印发送的 CMD109 完整内容（用于定位问题）
+	bodyJSON, _ := json.Marshal(body)
+	s.logger.Info("发送 CMD109 升级结果上报",
+		zap.String("station", s.SN),
+		zap.String("taskId", taskId),
+		zap.String("status", status),
+		zap.Int("progress", progress),
+		zap.ByteString("body", bodyJSON),
+	)
+
+	s.sendFrameUnsafe(protocol.CmdUpgradeResult, body)
+}
+
+// sendUpgradeResult 发送 CMD109 升级结果上报（加锁版本）
+func (s *SimStation) sendUpgradeResult(taskId, status string, progress int, message string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sendUpgradeResultUnsafe(taskId, status, progress, message)
+}
+
 // ExecuteUpgrade 执行升级流程（模拟，无真实下载）
+// 状态流转对齐真实客户端 SasocUpgradeBridge.cpp，同时模拟渐进式进度上报：
+//
+//	病毒库：downloading(0→100%) → downloaded(100%) → running(80→95%) → completed(100%)
+//	软件：  downloading(0→100%) → running(50→90%) → completed(100%)
+//
+// 总时长约 80 秒（1~2 分钟区间），避免 0% 直接跳变到 100%
+// 注意：初始 downloading(0%) 已在 handleUpgradeIssue 中发送
 func (s *SimStation) ExecuteUpgrade() {
 	if s.UpgradeTask == nil {
 		return
@@ -977,91 +1164,71 @@ func (s *SimStation) ExecuteUpgrade() {
 
 	taskId := s.UpgradeTask.TaskID
 	s.UpgradeTask.IsRunning = true
+	isSoftware := s.UpgradeTask.UpgradeType == "software"
 
-	// 启动时记录操作日志：收到升级指令
-	s.sendUpgradeOpLog("upgrade", fmt.Sprintf("收到病毒库升级指令，taskId=%s，virusType=%d，version=%s，URL=%s", taskId, s.UpgradeTask.VirusType, s.UpgradeTask.Version, s.UpgradeTask.DownloadURL))
+	// 记录操作日志：收到升级指令
+	s.sendUpgradeOpLog("upgrade", fmt.Sprintf("收到%s升级指令，taskId=%s，version=%s",
+		s.UpgradeTask.UpgradeType, taskId, s.UpgradeTask.Version))
 
-	stages := []struct {
-		progress int
-		desc     string
-		delay    time.Duration
-	}{
-		{20, "downloading", 3 * time.Second},
-		{50, "verifying", 2 * time.Second},
-		{80, "installing", 3 * time.Second},
-		{100, "completed", 0},
-	}
-
-	for _, stage := range stages {
-		select {
-		case <-s.ctx.Done():
-			s.UpgradeTask.IsRunning = false
-			// 中断时记录操作日志
-			s.sendUpgradeOpLog("upgrade", fmt.Sprintf("升级中断，taskId=%s，当前进度%d%%", taskId, s.UpgradeTask.Progress))
-			return
-		default:
+	if isSoftware {
+		// 软件升级：downloading(0→100%) → running(50→90%) → completed(100%)
+		// 阶段1：下载进度 10%→100%，每 5 秒上报一次（约 50 秒）
+		for p := 10; p <= 100; p += 10 {
+			s.sleepOrCancel(5 * time.Second)
+			s.sendUpgradeResult(taskId, "downloading", p, fmt.Sprintf("software downloading %d%%", p))
 		}
-
-		s.UpgradeTask.Progress = stage.progress
-		s.UpgradeTask.Status = "running"
-
-		// 上报进度（CMDID=109，携带 taskId）
-		innerBody := map[string]interface{}{
-			"taskId":   taskId,
-			"status":   "running",
-			"progress": stage.progress,
+		// 阶段2：安装进度 50%→90%，每 8 秒上报一次（约 32 秒）
+		for p := 50; p <= 90; p += 10 {
+			s.sendUpgradeResult(taskId, "running", p, fmt.Sprintf("software upgrade running %d%%", p))
+			s.sleepOrCancel(8 * time.Second)
 		}
-		body := map[string]interface{}{
-			"ComputerID": s.SN,
-			"CMDID":      protocol.CmdUpgradeResult,
-			"CMDVER":     1,
-			"msgId":      generateMsgID(),
-			"CMDContent": innerBody,
+		// 阶段3：完成
+		s.UpgradeTask.Status = "completed"
+		s.UpgradeTask.Progress = 100
+		s.sendUpgradeResult(taskId, "completed", 100, "software upgrade completed")
+	} else {
+		// 病毒库升级：downloading(0→100%) → downloaded(100%) → running(80→95%) → completed(100%)
+		// 阶段1：下载进度 10%→100%，每 5 秒上报一次（约 50 秒）
+		for p := 10; p <= 100; p += 10 {
+			s.sleepOrCancel(5 * time.Second)
+			s.sendUpgradeResult(taskId, "downloading", p, fmt.Sprintf("virus package downloading %d%%", p))
 		}
-		if err := s.sendFrame(protocol.CmdUpgradeResult, body); err != nil {
-			s.logger.Warn("upgrade progress report failed", zap.String("station", s.ID), zap.Error(err))
+		// 阶段2：下载完成
+		s.sendUpgradeResult(taskId, "downloaded", 100, "virus package downloaded")
+		// 阶段3：安装进度 80%→95%，每 8 秒上报一次（约 24 秒）
+		s.sendUpgradeResult(taskId, "running", 80, "virus package installing")
+		for p := 85; p <= 90; p += 5 {
+			s.sleepOrCancel(8 * time.Second)
+			s.sendUpgradeResult(taskId, "running", p, "virus package installing")
 		}
-
-		// 记录操作日志：进度节点
-		if stage.progress < 100 {
-			s.sendUpgradeOpLog("upgrade", fmt.Sprintf("病毒库升级进度 %d%%：%s，taskId=%s", stage.progress, stage.desc, taskId))
-		}
-
-		// 模拟阶段耗时
-		if stage.delay > 0 {
-			time.Sleep(stage.delay)
-		}
-	}
-
-	// 上报完成（CMDID=109，携带 taskId + virusType + version）
-	s.UpgradeTask.Status = "completed"
-	innerBody := map[string]interface{}{
-		"taskId":    taskId,
-		"status":    "completed",
-		"virusType": s.UpgradeTask.VirusType,
-		"version":   s.UpgradeTask.Version,
-	}
-	body := map[string]interface{}{
-		"ComputerID": s.SN,
-		"CMDID":      protocol.CmdUpgradeResult,
-		"CMDVER":     1,
-		"msgId":      generateMsgID(),
-		"CMDContent": innerBody,
-	}
-	if err := s.sendFrame(protocol.CmdUpgradeResult, body); err != nil {
-		s.logger.Warn("upgrade completion report failed", zap.String("station", s.ID), zap.Error(err))
+		s.sleepOrCancel(8 * time.Second)
+		s.sendUpgradeResult(taskId, "running", 95, "virus engine restarting")
+		// 阶段4：完成
+		s.sleepOrCancel(2 * time.Second)
+		s.UpgradeTask.Status = "completed"
+		s.UpgradeTask.Progress = 100
+		s.sendUpgradeResult(taskId, "completed", 100, "virus upgrade completed")
 	}
 
 	// 记录操作日志：升级完成
-	s.sendUpgradeOpLog("upgrade", fmt.Sprintf("病毒库升级完成，taskId=%s，virusType=%d，version=%s", taskId, s.UpgradeTask.VirusType, s.UpgradeTask.Version))
+	s.sendUpgradeOpLog("upgrade", fmt.Sprintf("%s升级完成，taskId=%s，version=%s",
+		s.UpgradeTask.UpgradeType, taskId, s.UpgradeTask.Version))
 
-	// 更新病毒库版本
-	for i := range s.VirusLibs {
-		if s.VirusLibs[i].Type == s.UpgradeTask.VirusType {
-			s.VirusLibs[i].Version = s.UpgradeTask.Version
-			s.VirusLibs[i].UpgradeTime = time.Now().UnixMilli()
+	// 更新版本
+	s.mu.Lock()
+	if s.UpgradeTask.UpgradeType == "software" {
+		// 软件升级：更新站点自身版本号
+		s.Version = s.UpgradeTask.Version
+	} else {
+		// 病毒库升级：更新病毒库版本
+		for i := range s.VirusLibs {
+			if s.VirusLibs[i].Type == s.UpgradeTask.VirusType {
+				s.VirusLibs[i].Version = s.UpgradeTask.Version
+				s.VirusLibs[i].UpgradeTime = time.Now().UnixMilli()
+			}
 		}
 	}
+	s.mu.Unlock()
 
 	// 自动信息上报刷新版本
 	time.Sleep(1 * time.Second)
@@ -1071,6 +1238,8 @@ func (s *SimStation) ExecuteUpgrade() {
 	s.sendUpgradeOpLog("upgrade", fmt.Sprintf("信息上报已刷新，展示新版本 %s", s.UpgradeTask.Version))
 
 	// 清除升级任务
+	s.mu.Lock()
 	s.UpgradeTask.IsRunning = false
 	s.UpgradeTask = nil
+	s.mu.Unlock()
 }

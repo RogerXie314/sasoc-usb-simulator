@@ -193,8 +193,37 @@ func (s *EchoServer) handleCommand(conn net.Conn, reqHeader *protocol.Header, bo
 	case protocol.CmdUsbReturn:
 		respBody = s.handleUsbReturn(cmdContent)
 	case protocol.CmdUpgradeIssue:
-		// 升级下发(108)：返回接受确认
-		innerResp := map[string]interface{}{"code": protocol.CodeSuccess, "message": "accepted"}
+		// 升级下发(108)：返回接受确认，同时回传升级参数
+		// 对齐真实客户端 SasocUpgradeBridge.cpp:221-266：virusType/version/downloadUrl/checksum
+		innerResp := map[string]interface{}{
+			"code":    protocol.CodeSuccess,
+			"message": "success",
+			"data":    map[string]interface{}{},
+		}
+		// 回传升级参数（让站点能正确解析）
+		if cmdContent != nil {
+			if v, ok := cmdContent["virusType"]; ok {
+				innerResp["virusType"] = v
+			}
+			if v, ok := cmdContent["version"]; ok {
+				innerResp["version"] = v
+			}
+			if v, ok := cmdContent["downloadUrl"]; ok {
+				innerResp["downloadUrl"] = v
+			}
+			if v, ok := cmdContent["checksum"]; ok {
+				innerResp["checksum"] = v
+			}
+			if v, ok := cmdContent["upgradeType"]; ok {
+				innerResp["upgradeType"] = v
+			}
+			if v, ok := cmdContent["type"]; ok {
+				innerResp["type"] = v
+			}
+			if v, ok := cmdContent["PackageName"]; ok {
+				innerResp["PackageName"] = v
+			}
+		}
 		respBody = wrapCMDContent(innerResp, body)
 	case protocol.CmdAlarm:
 		// 告警为单向上报，无应答

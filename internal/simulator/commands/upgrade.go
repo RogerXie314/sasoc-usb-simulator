@@ -39,7 +39,12 @@ func (c *UpgradeCommand) BuildBody(station *simulator.SimStation, params map[str
 func (c *UpgradeCommand) HandleResponse(station *simulator.SimStation, frame *protocol.Frame) error {
 	var resp map[string]interface{}
 	if err := frame.DecodeJSONBody(&resp); err != nil {
-		return err
+		// 数组格式：[{...}]
+		var arr []map[string]interface{}
+		if e2 := frame.DecodeJSONBody(&arr); e2 != nil || len(arr) == 0 {
+			return err
+		}
+		resp = arr[0]
 	}
 
 	cmdContent := extractCMDContent(resp)

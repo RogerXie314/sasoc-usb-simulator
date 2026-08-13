@@ -31,7 +31,11 @@ func (c *UsbReturnCommand) BuildBody(station *simulator.SimStation, params map[s
 func (c *UsbReturnCommand) HandleResponse(station *simulator.SimStation, frame *protocol.Frame) error {
 	var resp map[string]interface{}
 	if err := frame.DecodeJSONBody(&resp); err != nil {
-		return err
+		var arr []map[string]interface{}
+		if e2 := frame.DecodeJSONBody(&arr); e2 != nil || len(arr) == 0 {
+			return err
+		}
+		resp = arr[0]
 	}
 
 	cmdContent := extractCMDContent(resp)

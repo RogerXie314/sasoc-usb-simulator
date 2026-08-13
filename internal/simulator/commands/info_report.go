@@ -39,7 +39,11 @@ func (c *InfoReportCommand) HandleResponse(station *simulator.SimStation, frame 
 	// 信息上报应答通常为空或包含确认码
 	var resp map[string]interface{}
 	if err := frame.DecodeJSONBody(&resp); err != nil {
-		// 空包体视为成功
+		// 数组格式：[{...}]
+		var arr []map[string]interface{}
+		if e2 := frame.DecodeJSONBody(&arr); e2 == nil && len(arr) > 0 {
+			_ = extractCMDContent(arr[0])
+		}
 		return nil
 	}
 	// 有应答时从 CMDContent 提取（兼容扁平格式）

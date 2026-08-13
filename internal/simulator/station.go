@@ -790,51 +790,42 @@ func (s *SimStation) StartHeartbeatLoop() {
 }
 
 // handleRegisterResponse 处理注册响应
-// SASOC 响应格式：{CMDID:102, msgId:"...", CMDContent:{code:0, message:"success", data:{deviceId:10001}}}
+// SASOC 响应格式有两种：
+//   - 对象格式：{CMDID:102, msgId:"...", CMDContent:{code:0, message:"success", data:{deviceId:10001}}}
+//   - 数组格式：[{...}]（真实 SASOC 平台格式）
 func (s *SimStation) handleRegisterResponse(frame *protocol.Frame) {
-	// 尝试解码包体
+	// 先尝试对象格式，失败则尝试数组格式
 	var resp map[string]interface{}
 	if err := frame.DecodeJSONBody(&resp); err != nil {
-		// 解码失败：记录详细诊断信息
-		s.logger.Error("register response decode failed",
-			zap.String("station", s.ID),
-			zap.Error(err),
-			zap.Bool("encrypted", frame.Header.IsEncrypted()),
-			zap.Bool("compressed", frame.Header.IsCompressed()),
-			zap.Uint16("randomValue", frame.Header.RandomValue),
-			zap.Uint32("checksum", frame.Header.CheckSum),
-			zap.Uint8("fillLen", frame.Header.FillLen),
-			zap.Int("bodyLen", len(frame.Body)),
-		)
-
-		// 如果包体为空，可能是心跳应答被误判为注册响应，不改变状态
-		if len(frame.Body) == 0 {
-			s.logger.Warn("register response has empty body, ignoring", zap.String("station", s.ID))
+		var arr []map[string]interface{}
+		if e2 := frame.DecodeJSONBody(&arr); e2 != nil || len(arr) == 0 {
+			s.logger.Error("register response decode failed (both object and array)",
+				zap.String("station", s.ID),
+				zap.Error(err),
+			)
+			// 如果包体为空，可能是心跳应答被误判为注册响应
+			if len(frame.Body) == 0 {
+				s.logger.Warn("register response has empty body, ignoring", zap.String("station", s.ID))
+				return
+			}
+			// 解码失败但标记为在线，从包头提取 deviceId
+			s.logger.Warn("marking station online despite decode failure",
+				zap.String("station", s.ID),
+			)
+			s.SetState(StateOnline)
+			if s.GetDeviceID() == 0 && frame.Header.DevID > 0 {
+				s.SetDeviceID(frame.Header.DevID)
+			}
+			if s.HeartbeatEnabled {
+				go s.StartHeartbeatLoop()
+			}
+			go func() {
+				time.Sleep(1 * time.Second)
+				s.sendInfoReport()
+			}()
 			return
 		}
-
-		// 解码失败时仍然标记为在线（SASOC已确认注册成功，只是响应解析失败）
-		// 因为 SASOC 平台已经显示设备在线，说明注册请求被接受了
-		s.logger.Warn("marking station online despite decode failure (SASOC accepted registration)",
-			zap.String("station", s.ID),
-		)
-		s.SetState(StateOnline)
-		// 从包头 devID 提取设备ID
-		if s.GetDeviceID() == 0 && frame.Header.DevID > 0 {
-			s.SetDeviceID(frame.Header.DevID)
-			s.logger.Info("deviceId from header (decode failed path)", zap.Uint32("deviceId", s.GetDeviceID()))
-		}
-
-		// 启动心跳
-		if s.HeartbeatEnabled {
-			go s.StartHeartbeatLoop()
-		}
-		// 自动信息上报
-		go func() {
-			time.Sleep(1 * time.Second)
-			s.sendInfoReport()
-		}()
-		return
+		resp = arr[0]
 	}
 
 	// 记录解码成功的响应

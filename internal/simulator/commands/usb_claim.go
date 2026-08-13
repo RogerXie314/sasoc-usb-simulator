@@ -40,7 +40,11 @@ func (c *UsbClaimCommand) BuildBody(station *simulator.SimStation, params map[st
 func (c *UsbClaimCommand) HandleResponse(station *simulator.SimStation, frame *protocol.Frame) error {
 	var resp map[string]interface{}
 	if err := frame.DecodeJSONBody(&resp); err != nil {
-		return err
+		var arr []map[string]interface{}
+		if e2 := frame.DecodeJSONBody(&arr); e2 != nil || len(arr) == 0 {
+			return err
+		}
+		resp = arr[0]
 	}
 
 	cmdContent := extractCMDContent(resp)

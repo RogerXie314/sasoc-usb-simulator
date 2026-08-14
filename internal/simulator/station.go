@@ -218,6 +218,10 @@ func (s *SimStation) Start() error {
 	}
 	s.mu.Unlock()
 
+	// 重新创建 context 和 msgCh，因为 Stop() 已经 cancel 了旧的
+	s.ctx, s.cancel = context.WithCancel(context.Background())
+	s.msgCh = make(chan *protocol.Frame, 100)
+
 	return s.connectAndRegister()
 }
 
@@ -733,6 +737,7 @@ func (s *SimStation) SendFrame(cmdID uint32, body interface{}) error {
 // 外层Head包含 ComputerID/CMDID/CMDVER/msgId/CMDContent
 func (s *SimStation) sendRegister() error {
 	innerBody := map[string]interface{}{
+		"sn":      s.SN,
 		"model":   s.Model,
 		"version": s.Version,
 		"ip":      s.IP,
@@ -908,6 +913,7 @@ func (s *SimStation) sendInfoReport() error {
 	}
 
 	innerBody := map[string]interface{}{
+		"sn":        s.SN,
 		"model":     s.Model,
 		"version":   s.Version,
 		"virusLibs": virusLibs,

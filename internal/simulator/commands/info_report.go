@@ -21,6 +21,7 @@ func (c *InfoReportCommand) BuildBody(station *simulator.SimStation, params map[
 	}
 
 	body := map[string]interface{}{
+		"sn":        station.SN,
 		"model":     station.Model,
 		"version":   station.Version,
 		"virusLibs": virusLibs,

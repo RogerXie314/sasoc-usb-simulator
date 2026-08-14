@@ -15,6 +15,7 @@ func (c *RegisterCmd) CmdID() uint32 { return protocol.CmdRegister }
 
 func (c *RegisterCmd) BuildBody(station *simulator.SimStation, params map[string]interface{}) (interface{}, error) {
 	body := map[string]interface{}{
+		"sn":      station.SN,
 		"model":   station.Model,
 		"version": station.Version,
 		"ip":      station.IP,

@@ -162,6 +162,11 @@ func NewSimStation(id, sn, model, version, name string) *SimStation {
 	}
 }
 
+// GetUUID 返回站点 UUID（用于持久化，确保 ComputerID 不变）
+func (s *SimStation) GetUUID() string {
+	return s.uuid
+}
+
 // ComputerID 生成符合真实安检站格式的 ComputerID：MAC-UUID-Name
 // 对齐真实客户端 GetComputerId()：snprintf("%s-%s-%s", szMacAddr, szUUID, szHostname)
 func (s *SimStation) ComputerID() string {
@@ -176,8 +181,8 @@ func (s *SimStation) ComputerID() string {
 }
 
 // RestoreSimStation 从持久化数据恢复模拟安检站
-// 用于启动时从数据库恢复站点，保留已有的 SN/Model 等信息
-func RestoreSimStation(id, sn, model, version, ip, mac, name string, deviceID uint32, sasocHost string, sasocPort int, heartbeatEnabled bool, heartbeatInterval int, encryptEnabled, compressEnabled bool) *SimStation {
+// 用于启动时从数据库恢复站点，保留已有的 SN/Model/UUID 等信息
+func RestoreSimStation(id, sn, model, version, ip, mac, name string, uuid string, deviceID uint32, sasocHost string, sasocPort int, heartbeatEnabled bool, heartbeatInterval int, encryptEnabled, compressEnabled bool) *SimStation {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &SimStation{
 		ID:                id,
@@ -187,6 +192,7 @@ func RestoreSimStation(id, sn, model, version, ip, mac, name string, deviceID ui
 		IP:                ip,
 		MAC:               mac,
 		Name:              name,
+		uuid:              uuid,
 		DeviceID:          deviceID,
 		State:             StateIdle, // 恢复时状态为 idle
 		SasocHost:         sasocHost,
@@ -205,7 +211,6 @@ func RestoreSimStation(id, sn, model, version, ip, mac, name string, deviceID ui
 		cancel:    cancel,
 		msgCh:     make(chan *protocol.Frame, 100),
 		logger:    zap.L(),
-		uuid:      generateUUID(),
 	}
 }
 
@@ -330,33 +335,24 @@ func (s *SimStation) connectAndRegister() error {
 	}
 
 	// 等待 SASOC 注册响应（由 receiveLoop -> handleFrame -> handleRegisterResponse 处理）
-	// 超时兜底：如果 10 秒内未收到合法注册响应，自动标记 online 并启心跳
+	// 超时兜底：如果 10 秒内未收到合法注册响应，标记为重连并启动新的重连循环
 	go func() {
 		time.Sleep(10 * time.Second)
 		if s.GetState() == StateRegister {
-			s.logger.Info("register response timeout, auto-marking online",
+			s.logger.Warn("register response timeout, marking reconnect",
 				zap.String("station", s.ID),
 			)
-			s.SetState(StateOnline)
-
-			// 启动心跳
-			if s.HeartbeatEnabled {
-				go s.StartHeartbeatLoop()
-			}
-			// 自动信息上报
-			go func() {
-				time.Sleep(1 * time.Second)
-				if err := s.sendInfoReport(); err != nil {
-					s.logger.Warn("info report send failed", zap.String("station", s.ID), zap.Error(err))
-				}
-			}()
+			s.SetState(StateReconnect)
+			// connectAndRegister 返回 nil 后 reconnectLoop 已退出，
+			// 需要启动新的 reconnectLoop 继续重试
+			go s.reconnectLoop()
 		}
 	}()
 
 	return nil
 }
 
-// reconnectLoop 重连循环（60 秒间隔）
+// reconnectLoop 重连循环（首次立即尝试，之后 60 秒间隔）
 // 使用 CAS 守卫确保每个站点同一时刻只有一个重连 goroutine 在运行
 func (s *SimStation) reconnectLoop() {
 	if !s.reconnecting.CompareAndSwap(false, true) {
@@ -364,6 +360,12 @@ func (s *SimStation) reconnectLoop() {
 		return
 	}
 	defer s.reconnecting.Store(false)
+
+	// 首次立即尝试重连
+	s.logger.Info("attempting reconnect", zap.String("station", s.ID))
+	if err := s.connectAndRegister(); err == nil {
+		return // 重连成功
+	}
 
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
@@ -485,15 +487,8 @@ func (s *SimStation) readExact(buf []byte) (int, error) {
 }
 
 // handleDisconnect 处理断线
-// 增加2秒防抖：网络瞬时抖动时如果2秒内恢复则不上报离线
+// 立即将状态切换为 StateReconnect，关闭旧连接，启动重连循环
 func (s *SimStation) handleDisconnect() {
-	// 快速重试一次，确认不是瞬时抖动
-	time.Sleep(2 * time.Second)
-	if s.IsOnline() {
-		// 已自行恢复，无需通知
-		return
-	}
-
 	s.mu.Lock()
 	oldState := s.State
 
@@ -782,12 +777,8 @@ func (s *SimStation) StartHeartbeatLoop() {
 			}
 			if err := s.sendFrame(protocol.CmdHeartbeat, body); err != nil {
 				s.logger.Error("heartbeat send failed", zap.String("station", s.ID), zap.Error(err))
-				// 心跳发送失败说明连接已不可靠，主动关闭触发统一重连
-				s.mu.Lock()
-				if s.conn != nil {
-					s.conn.Close()
-				}
-				s.mu.Unlock()
+				// 心跳发送失败说明连接已不可靠，触发统一断线重连流程
+				s.handleDisconnect()
 				return
 			}
 		}

@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS sim_station (
     name        TEXT    NOT NULL DEFAULT '',
     device_id   INTEGER NOT NULL DEFAULT 0,
     status      TEXT    NOT NULL DEFAULT 'idle',
+    uuid        TEXT    NOT NULL DEFAULT '',
     config      TEXT    NOT NULL DEFAULT '{}',
     created_at  DATETIME NOT NULL DEFAULT (datetime('now','localtime')),
     updated_at  DATETIME NOT NULL DEFAULT (datetime('now','localtime'))
@@ -134,6 +135,15 @@ CREATE INDEX IF NOT EXISTS idx_cabinet_slot_station ON cabinet_slot_status(stati
 	if _, err := db.Exec(schema); err != nil {
 		return fmt.Errorf("exec schema: %w", err)
 	}
+
+	// 兼容性迁移：给旧数据库补 uuid 列
+	var colCount int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('sim_station') WHERE name='uuid'`).Scan(&colCount)
+	if colCount == 0 {
+		if _, err := db.Exec(`ALTER TABLE sim_station ADD COLUMN uuid TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("migrate add uuid column: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -148,6 +158,7 @@ type SimStationRow struct {
 	Name     string `json:"name"`
 	DeviceID int    `json:"deviceId"`
 	Status   string `json:"status"`
+	UUID     string `json:"uuid"`
 	Config   string `json:"config"` // JSON string
 }
 
@@ -198,6 +209,6 @@ type PressureMetricRow struct {
 	Timestamp            time.Time `json:"timestamp"`
 	OnlineCount          int       `json:"onlineCount"`
 	HeartbeatSuccessRate float64   `json:"heartbeatSuccessRate"`
-	AvgLatencyMs        float64   `json:"avgLatencyMs"`
+	AvgLatencyMs         float64   `json:"avgLatencyMs"`
 	Throughput           float64   `json:"throughput"`
 }

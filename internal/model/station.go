@@ -10,14 +10,14 @@ import (
 func InsertStation(db *sql.DB, s *SimStationRow) error {
 	now := time.Now().Format(time.DateTime)
 	_, err := db.Exec(`INSERT INTO sim_station
-		(id, sn, model, version, ip, mac, name, device_id, status, config, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		(id, sn, model, version, ip, mac, name, device_id, status, uuid, config, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			sn = excluded.sn, model = excluded.model, version = excluded.version,
 			ip = excluded.ip, mac = excluded.mac, name = excluded.name,
 			device_id = excluded.device_id, status = excluded.status,
-			config = excluded.config, updated_at = excluded.updated_at`,
-		s.ID, s.SN, s.Model, s.Version, s.IP, s.MAC, s.Name, s.DeviceID, s.Status, s.Config, now, now,
+			uuid = excluded.uuid, config = excluded.config, updated_at = excluded.updated_at`,
+		s.ID, s.SN, s.Model, s.Version, s.IP, s.MAC, s.Name, s.DeviceID, s.Status, s.UUID, s.Config, now, now,
 	)
 	if err != nil {
 		return fmt.Errorf("upsert sim_station: %w", err)
@@ -27,11 +27,11 @@ func InsertStation(db *sql.DB, s *SimStationRow) error {
 
 // GetStation 按 ID 查询单条安检站
 func GetStation(db *sql.DB, id string) (*SimStationRow, error) {
-	row := db.QueryRow(`SELECT id, sn, model, version, ip, mac, name, device_id, status, config
+	row := db.QueryRow(`SELECT id, sn, model, version, ip, mac, name, device_id, status, uuid, config
 		FROM sim_station WHERE id = ?`, id)
 	var s SimStationRow
 	if err := row.Scan(&s.ID, &s.SN, &s.Model, &s.Version, &s.IP, &s.MAC, &s.Name,
-		&s.DeviceID, &s.Status, &s.Config); err != nil {
+		&s.DeviceID, &s.Status, &s.UUID, &s.Config); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
@@ -46,11 +46,11 @@ func ListStations(db *sql.DB, status string) ([]*SimStationRow, error) {
 	var args []interface{}
 
 	if status != "" {
-		query = `SELECT id, sn, model, version, ip, mac, name, device_id, status, config
+		query = `SELECT id, sn, model, version, ip, mac, name, device_id, status, uuid, config
 			FROM sim_station WHERE status = ? ORDER BY sn ASC`
 		args = append(args, status)
 	} else {
-		query = `SELECT id, sn, model, version, ip, mac, name, device_id, status, config
+		query = `SELECT id, sn, model, version, ip, mac, name, device_id, status, uuid, config
 			FROM sim_station ORDER BY sn ASC`
 	}
 
@@ -64,7 +64,7 @@ func ListStations(db *sql.DB, status string) ([]*SimStationRow, error) {
 	for rows.Next() {
 		var s SimStationRow
 		if err := rows.Scan(&s.ID, &s.SN, &s.Model, &s.Version, &s.IP, &s.MAC, &s.Name,
-			&s.DeviceID, &s.Status, &s.Config); err != nil {
+			&s.DeviceID, &s.Status, &s.UUID, &s.Config); err != nil {
 			return nil, fmt.Errorf("scan sim_station: %w", err)
 		}
 		result = append(result, &s)
@@ -77,10 +77,10 @@ func UpdateStation(db *sql.DB, s *SimStationRow) error {
 	now := time.Now().Format(time.DateTime)
 	res, err := db.Exec(`UPDATE sim_station SET
 		sn = ?, model = ?, version = ?, ip = ?, mac = ?, name = ?,
-		device_id = ?, status = ?, config = ?, updated_at = ?
+		device_id = ?, status = ?, uuid = ?, config = ?, updated_at = ?
 		WHERE id = ?`,
 		s.SN, s.Model, s.Version, s.IP, s.MAC, s.Name,
-		s.DeviceID, s.Status, s.Config, now, s.ID,
+		s.DeviceID, s.Status, s.UUID, s.Config, now, s.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("update sim_station %s: %w", s.ID, err)

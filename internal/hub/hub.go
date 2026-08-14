@@ -316,7 +316,7 @@ func (h *Hub) RestoreStations() error {
 		// 使用工厂函数恢复 SimStation 对象
 		s := simulator.RestoreSimStation(
 			row.ID, row.SN, row.Model, row.Version,
-			row.IP, row.MAC, row.Name,
+			row.IP, row.MAC, row.Name, row.UUID,
 			uint32(row.DeviceID),
 			sasocHost, sasocPort,
 			heartbeatEnabled, heartbeatInterval,
@@ -384,6 +384,7 @@ func (h *Hub) AddStation(s *simulator.SimStation) error {
 			IP:       s.IP,
 			MAC:      s.MAC,
 			Name:     s.Name,
+			UUID:     s.GetUUID(),
 			DeviceID: int(s.DeviceID),
 			Status:   string(s.State),
 			Config:   configJSON,

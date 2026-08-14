@@ -234,38 +234,40 @@ func (ph *pressureHandler) runPressure(stations []*simulator.SimStation, cfg Pre
 					continue
 				}
 
-				// 发送告警
+				// 发送告警：遍历所有勾选的告警类型，每种都发一次
 				if cfg.IncludeAlarms && len(cfg.AlarmTypes) > 0 {
-					alarmType := cfg.AlarmTypes[rand.Intn(len(cfg.AlarmTypes))]
-					params := map[string]interface{}{
-						"alarmType": alarmType,
-						"sn":        s.SN,
-					}
-					if alarmType == commands.AlarmTypeMalwareDetected {
-						params["virusName"] = randomVirusName()
-						params["virusType"] = randomVirusType()
-						params["fileName"] = randomFileName()
-						params["fileHash"] = randomFileHash()
-					}
-					if err := commands.SendCommand(s, protocol.CmdAlarm, params); err != nil {
-						mgr.errors.Add(1)
-					} else {
-						mgr.alarmsSent.Add(1)
+					for _, alarmType := range cfg.AlarmTypes {
+						params := map[string]interface{}{
+							"alarmType": alarmType,
+							"sn":        s.SN,
+						}
+						if alarmType == commands.AlarmTypeMalwareDetected {
+							params["virusName"] = randomVirusName()
+							params["virusType"] = randomVirusType()
+							params["fileName"] = randomFileName()
+							params["fileHash"] = randomFileHash()
+						}
+						if err := commands.SendCommand(s, protocol.CmdAlarm, params); err != nil {
+							mgr.errors.Add(1)
+						} else {
+							mgr.alarmsSent.Add(1)
+						}
 					}
 				}
 
-				// 发送操作日志
+				// 发送操作日志：遍历所有勾选的日志类型，每种都发一次
 				if cfg.IncludeLogs && len(cfg.LogTypes) > 0 {
-					opType := cfg.LogTypes[rand.Intn(len(cfg.LogTypes))]
-					params := map[string]interface{}{
-						"operation": opType,
-						"sn":        randomUsbSN(),
-						"result":    randomOpResult(),
-					}
-					if err := commands.SendCommand(s, protocol.CmdOperationLog, params); err != nil {
-						mgr.errors.Add(1)
-					} else {
-						mgr.logsSent.Add(1)
+					for _, opType := range cfg.LogTypes {
+						params := map[string]interface{}{
+							"operation": opType,
+							"sn":        randomUsbSN(),
+							"result":    randomOpResult(),
+						}
+						if err := commands.SendCommand(s, protocol.CmdOperationLog, params); err != nil {
+							mgr.errors.Add(1)
+						} else {
+							mgr.logsSent.Add(1)
+						}
 					}
 				}
 			}

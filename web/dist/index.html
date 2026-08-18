@@ -96,7 +96,7 @@ html,body,#app{height:100%;font-family:'Microsoft YaHei','PingFang SC',sans-seri
     <div class="logo">
       <span class="dot"></span>
       移动介质安检站模拟测试工具
-      <span class="app-version">V2.8.5</span>
+      <span class="app-version">V2.8.6</span>
     </div>
     <div class="header-right">
       <div class="sasoc-config" @click="showSasocDialog" title="点击修改SASOC服务器地址">
@@ -172,6 +172,10 @@ html,body,#app{height:100%;font-family:'Microsoft YaHei','PingFang SC',sans-seri
         <el-menu-item index="/pressure">
           <el-icon><DataLine /></el-icon>
           <span>压力测试</span>
+        </el-menu-item>
+        <el-menu-item index="/claim">
+          <el-icon><DocumentChecked /></el-icon>
+          <span>批量申领码</span>
         </el-menu-item>
       </el-menu>
     </aside>
@@ -2077,6 +2081,231 @@ const PressurePage = {
 };
 
 // ============================================================
+// Claim Code Generation Page
+// ============================================================
+const ClaimPage = {
+  template: `
+    <div>
+      <div class="page-header">
+        <h2>批量申领码生成</h2>
+      </div>
+
+      <!-- 统计栏 -->
+      <div class="stat-cards">
+        <div class="stat-card">
+          <div class="stat-label">生成进度</div>
+          <div class="stat-value success">{{stats.success||0}}</div>
+          <el-icon class="stat-icon"><DocumentChecked /></el-icon>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">失败数量</div>
+          <div class="stat-value" :class="stats.failed>0?'warning':''">{{stats.failed||0}}</div>
+          <el-icon class="stat-icon"><Warning /></el-icon>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">生成速率</div>
+          <div class="stat-value">{{(stats.rate||0).toFixed(1)}} 条/秒</div>
+          <el-icon class="stat-icon"><Timer /></el-icon>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">耗时</div>
+          <div class="stat-value">{{formatElapsed(stats.elapsed)}}</div>
+          <el-icon class="stat-icon"><Clock /></el-icon>
+        </div>
+      </div>
+
+      <!-- 运行状态 -->
+      <el-card v-if="stats.status==='running'" style="margin-bottom:20px" body-style="padding:16px 20px">
+        <div style="display:flex;align-items:center;gap:16px">
+          <el-tag type="success" effect="dark" size="large">生成中</el-tag>
+          <span style="font-size:14px;color:#606266">任务ID: {{stats.taskId}}</span>
+          <span style="font-size:14px;color:#606266">总数量: {{stats.total}}</span>
+          <el-progress :percentage="progressPercent" style="width:200px" />
+          <el-button type="danger" @click="stopClaim" style="margin-left:auto">停止生成</el-button>
+        </div>
+      </el-card>
+
+      <!-- 登录配置 -->
+      <el-card style="margin-bottom:20px">
+        <template #header><span style="font-weight:600">SASOC 平台登录</span></template>
+        <el-form :model="loginForm" label-width="120px" size="default">
+          <el-form-item label="平台地址">
+            <el-input v-model="loginForm.platformUrl" placeholder="如 https://192.168.123.24:8440" style="width:360px" />
+          </el-form-item>
+          <el-form-item label="用户名">
+            <el-input v-model="loginForm.username" placeholder="请输入用户名" style="width:240px" />
+          </el-form-item>
+          <el-form-item label="密码">
+            <el-input v-model="loginForm.password" type="password" placeholder="请输入密码" show-password style="width:240px" />
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" @click="checkLoginStatus" :loading="checkingLogin">
+              <el-icon><Refresh /></el-icon> 刷新登录状态
+            </el-button>
+            <span v-if="loginStatus.loggedIn" style="margin-left:12px;color:#67c23a;font-size:13px">
+              <el-icon><CircleCheck /></el-icon> 已登录 (session: {{loginStatus.sessionId}})
+            </span>
+            <span v-else style="margin-left:12px;color:#909399;font-size:13px">
+              <el-icon><CircleClose /></el-icon> 未登录
+            </span>
+          </el-form-item>
+        </el-form>
+      </el-card>
+
+      <!-- 生成配置 -->
+      <el-card style="margin-bottom:20px">
+        <template #header><span style="font-weight:600">生成配置</span></template>
+        <el-form :model="form" label-width="120px" size="default">
+          <el-form-item label="生成数量">
+            <el-input-number v-model="form.total" :min="1" :max="1000000" :step="1000" style="width:200px" />
+            <span style="margin-left:12px;font-size:12px;color:#909399">目标生成申领码数量</span>
+          </el-form-item>
+          <el-form-item label="并发数">
+            <el-input-number v-model="form.concurrent" :min="1" :max="20" style="width:200px" />
+            <span style="margin-left:12px;font-size:12px;color:#909399">同时并发请求数 (1-20)</span>
+          </el-form-item>
+          <el-form-item>
+            <el-button type="danger" size="large" @click="startClaim" :disabled="stats.status==='running'" :loading="starting">
+              <el-icon><VideoPlay /></el-icon> 开始生成
+            </el-button>
+            <el-button type="warning" size="large" @click="stopClaim" :disabled="stats.status!=='running'" style="margin-left:12px">
+              <el-icon><VideoPause /></el-icon> 停止生成
+            </el-button>
+            <el-button size="large" @click="exportCodes" :disabled="!hasCodes" style="margin-left:12px">
+              <el-icon><Download /></el-icon> 导出结果
+            </el-button>
+          </el-form-item>
+        </el-form>
+      </el-card>
+    </div>
+  `,
+  data() {
+    return {
+      stats: { status: 'none', taskId: '', total: 0, success: 0, failed: 0, rate: 0, elapsed: 0 },
+      loginForm: {
+        platformUrl: 'https://192.168.123.24:8440',
+        username: '',
+        password: '',
+      },
+      loginStatus: { loggedIn: false, sessionId: '' },
+      form: {
+        total: 100000,
+        concurrent: 10,
+      },
+      starting: false,
+      checkingLogin: false,
+      statsTimer: null,
+    };
+  },
+  computed: {
+    progressPercent() {
+      if (!this.stats.total) return 0;
+      return Math.min(100, Math.round(((this.stats.success + this.stats.failed) / this.stats.total) * 100));
+    },
+    hasCodes() {
+      return this.stats.status === 'completed' && this.stats.success > 0;
+    },
+  },
+  methods: {
+    formatElapsed(s) {
+      if (!s) return '0s';
+      const m = Math.floor(s / 60);
+      const sec = Math.floor(s % 60);
+      if (m > 0) return m + 'm ' + sec + 's';
+      return sec + 's';
+    },
+    async loadStats() {
+      try {
+        const r = await apiGet('/claim/status');
+        if (r) {
+          this.stats = {
+            status: r.status || 'none',
+            taskId: r.taskId || '',
+            total: r.total || 0,
+            success: r.success || 0,
+            failed: r.failed || 0,
+            rate: r.rate || 0,
+            elapsed: r.elapsed || 0,
+          };
+        }
+      } catch (e) {
+        // ignore
+      }
+    },
+    async checkLoginStatus() {
+      this.checkingLogin = true;
+      try {
+        const r = await apiGet('/claim/login-status');
+        this.loginStatus = {
+          loggedIn: r && r.loggedIn,
+          sessionId: r && r.sessionId ? r.sessionId.substring(0, 8) + '...' : '',
+        };
+        if (r && r.loggedIn) {
+          ElementPlus.ElMessage.success('已登录 SASOC 平台');
+        } else {
+          ElementPlus.ElMessage.info('未登录，请先输入账号密码并开始生成');
+        }
+      } catch (e) {
+        ElementPlus.ElMessage.error('查询登录状态失败');
+      } finally {
+        this.checkingLogin = false;
+      }
+    },
+    async startClaim() {
+      if (!this.loginForm.username || !this.loginForm.password) {
+        ElementPlus.ElMessage.warning('请输入用户名和密码');
+        return;
+      }
+      this.starting = true;
+      try {
+        const r = await apiPost('/claim/login-and-start', {
+          platformUrl: this.loginForm.platformUrl,
+          username: this.loginForm.username,
+          password: this.loginForm.password,
+          total: this.form.total,
+          concurrent: this.form.concurrent,
+        });
+        ElementPlus.ElMessage.success('登录成功，申领码生成任务已启动');
+        this.loginStatus = { loggedIn: true, sessionId: r.sessionId ? r.sessionId.substring(0, 8) + '...' : '' };
+        this.loadStats();
+      } catch (e) {
+        ElementPlus.ElMessage.error('启动失败: ' + (e.message || '未知错误'));
+      } finally {
+        this.starting = false;
+      }
+    },
+    async stopClaim() {
+      try {
+        await apiPost('/claim/cancel');
+        ElementPlus.ElMessage.success('已取消生成任务');
+        this.loadStats();
+      } catch (e) {
+        ElementPlus.ElMessage.error('取消失败: ' + e.message);
+      }
+    },
+    async exportCodes() {
+      try {
+        const a = document.createElement('a');
+        a.href = API_BASE + '/claim/export?format=json';
+        a.download = 'apply_codes.json';
+        a.click();
+        ElementPlus.ElMessage.success('开始下载申领码列表');
+      } catch (e) {
+        ElementPlus.ElMessage.error('导出失败: ' + e.message);
+      }
+    },
+  },
+  mounted() {
+    this.loadStats();
+    this.checkLoginStatus();
+    this.statsTimer = setInterval(this.loadStats, 3000);
+  },
+  beforeUnmount() {
+    if (this.statsTimer) clearInterval(this.statsTimer);
+  }
+};
+
+// ============================================================
 // Router & App
 // ============================================================
 const { createApp, ref, onMounted, onBeforeUnmount, computed } = Vue;
@@ -2089,6 +2318,7 @@ const routes = [
   { path: '/debug', component: DebugPage },
   { path: '/log', component: LogPage },
   { path: '/pressure', component: PressurePage },
+  { path: '/claim', component: ClaimPage },
   { path: '/:pathMatch(.*)*', redirect: '/' }
 ];
 

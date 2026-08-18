@@ -144,6 +144,16 @@ func SetupRouter(h *hub.Hub, cfg *config.Config) *gin.Engine {
 		v1.POST("/pressure/start", pressureHandler.startPressure)
 		v1.POST("/pressure/stop", pressureHandler.stopPressure)
 		v1.GET("/pressure/stats", pressureHandler.getPressureStats)
+
+		// ---- 批量申领码 ----
+		claimHandler := newClaimHandler(h)
+		v1.POST("/claim/start", claimHandler.startClaim)
+		v1.GET("/claim/status", claimHandler.statusClaim)
+		v1.POST("/claim/cancel", claimHandler.cancelClaim)
+		v1.GET("/claim/export", claimHandler.exportClaim)
+		v1.GET("/claim/counts", claimHandler.countsClaim)
+		v1.POST("/claim/login-and-start", claimHandler.loginAndStartClaim)
+		v1.GET("/claim/login-status", claimHandler.loginStatusClaim)
 	}
 
 	return r

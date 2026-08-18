@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
@@ -19,11 +21,13 @@ import (
 
 // Config 批量申领码生成配置
 type Config struct {
-	PlatformURL string `json:"platformUrl"` // 平台地址，如 https://192.168.123.24:8440
-	Token       string `json:"token"`       // Authorization Token
-	SessionID   string `json:"sessionId"`   // JSESSIONID
-	Total       int    `json:"total"`       // 目标数量
-	Concurrent  int    `json:"concurrent"`  // 并发数，默认 5
+	PlatformURL string         `json:"platformUrl"` // 平台地址，如 https://192.168.123.24:8440
+	Token       string         `json:"token"`       // Authorization Token
+	SessionID   string         `json:"sessionId"`   // JSESSIONID（备用，Jar优先）
+	Jar         http.CookieJar `json:"-"`           // 登录时的完整CookieJar（优先使用）
+	Client      *http.Client   `json:"-"`           // 登录时的HTTP Client（复用TCP连接池，避免后端因连接变化触发KICKOUT）
+	Total       int            `json:"total"`       // 目标数量
+	Concurrent  int            `json:"concurrent"`  // 并发数，默认5
 }
 
 // Task 批量任务状态
@@ -40,8 +44,9 @@ type Task struct {
 	StartedAt time.Time `json:"startedAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 
-	mu       sync.Mutex
-	cancelCh chan struct{}
+	mu         sync.Mutex
+	cancelCh   chan struct{}
+	cancelOnce sync.Once
 }
 
 var (
@@ -122,21 +127,56 @@ func CancelTask() {
 	taskMu.Lock()
 	defer taskMu.Unlock()
 	if activeTask != nil && activeTask.Status == "running" {
-		close(activeTask.cancelCh)
+		activeTask.cancelOnce.Do(func() { close(activeTask.cancelCh) })
 		activeTask.Status = "cancelled"
 	}
 }
 
 func runTask(task *Task, cfg Config, db *sql.DB) {
 	logger := zap.L()
-	client := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		},
-		Timeout: 30 * time.Second,
+
+	// 优先复用登录时的 HTTP Client（同一 TCP 连接池），避免后端因连接变化触发 KICKOUT
+	// 如果没有，则创建新 Client + CookieJar
+	var jar http.CookieJar
+	var client *http.Client
+	if cfg.Client != nil {
+		client = cfg.Client
+		if cfg.Jar != nil {
+			jar = cfg.Jar
+		} else {
+			jar = client.Jar
+		}
+		logger.Info("claim gen: reusing login HTTP Client (same TCP pool)")
+	} else {
+		if cfg.Jar != nil {
+			jar = cfg.Jar
+			logger.Info("claim gen: using login CookieJar (new client)")
+		} else {
+			jar, _ = cookiejar.New(nil)
+			if cfg.SessionID != "" {
+				baseURL, _ := url.Parse(cfg.PlatformURL)
+				if baseURL != nil {
+					jar.SetCookies(baseURL, []*http.Cookie{
+						{
+							Name:  "JSESSIONID",
+							Value: cfg.SessionID,
+							Path:  "/",
+						},
+					})
+				}
+			}
+			logger.Info("claim gen: created new CookieJar", zap.String("sessionId", cfg.SessionID))
+		}
+		client = &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			},
+			Timeout: 30 * time.Second,
+			Jar:     jar,
+		}
 	}
 
-	url := cfg.PlatformURL + "/USM/ieg/usbApply/add"
+	claimURL := cfg.PlatformURL + "/USM/ieg/usbApply/add"
 	var success, failed int64
 	var codes []string
 	var codesMu sync.Mutex
@@ -149,7 +189,12 @@ func runTask(task *Task, cfg Config, db *sql.DB) {
 	for i := 0; i < cfg.Concurrent; i++ {
 		wg.Add(1)
 		go func() {
-			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					logger.Error("claim gen worker panic", zap.Any("recover", r))
+				}
+				wg.Done()
+			}()
 			for {
 				select {
 				case <-task.cancelCh:
@@ -166,20 +211,20 @@ func runTask(task *Task, cfg Config, db *sql.DB) {
 					"applicantName": "batch",
 					"applicantCode": fmt.Sprintf("%05d", idx+1),
 					"phone":         fmt.Sprintf("138%08d", idx%100000000),
-					"startTime":     time.Now().Format("2006-01-02 10:00:00"),
-					"endTime":       time.Now().Add(24 * time.Hour).Format("2006-01-02 10:00:00"),
+					"startTime":     time.Now().Format("2006-01-02 15:04:05"),
+					"endTime":       time.Now().Add(24 * time.Hour).Format("2006-01-02 15:04:05"),
 					"factoryIds":    "3",
 					"capacity":      "16G",
 					"format":        "FAT32",
 				}
 				jsonBody, _ := json.Marshal(body)
 
-				req, _ := http.NewRequest("POST", url, bytes.NewReader(jsonBody))
+				req, _ := http.NewRequest("POST", claimURL, bytes.NewReader(jsonBody))
+				standardHeaders(req)
 				req.Header.Set("Content-Type", "application/json;charset=UTF-8")
+				req.Header.Set("Referer", cfg.PlatformURL+"/USM/")
 				req.Header.Set("Authorization", cfg.Token)
-				req.Header.Set("User-Agent", "Mozilla/5.0")
-				req.Header.Set("Referer", cfg.PlatformURL+"/")
-				req.AddCookie(&http.Cookie{Name: "JSESSIONID", Value: cfg.SessionID})
+				req.Header.Set("Origin", cfg.PlatformURL)
 
 				resp, err := client.Do(req)
 				if err != nil {
@@ -209,7 +254,7 @@ func runTask(task *Task, cfg Config, db *sql.DB) {
 					// 被踢出时停止
 					if resp.StatusCode == 403 && bytes.Contains(respBody, []byte("KICKOUT")) {
 						logger.Warn("claim gen: session kicked out, stopping")
-						close(task.cancelCh)
+						task.cancelOnce.Do(func() { close(task.cancelCh) })
 						return
 					}
 				}
@@ -238,18 +283,33 @@ func runTask(task *Task, cfg Config, db *sql.DB) {
 	if task.Status == "running" {
 		task.Status = "completed"
 	}
-	task.UpdatedAt = time.Now()
 	task.mu.Unlock()
 
-	// 保存到文件
-	if len(codes) > 0 {
-		data, _ := json.MarshalIndent(codes, "", "  ")
-		os.WriteFile(filepath.Join(os.TempDir(), task.ID+".json"), data, 0644)
-	}
-
-	logger.Info("claim gen completed",
+	logger.Info("claim gen task finished",
+		zap.String("taskId", task.ID),
+		zap.Int("total", task.Total),
 		zap.Int("success", task.Success),
 		zap.Int("failed", task.Failed),
 		zap.Float64("elapsed", elapsed),
+		zap.Float64("rate", task.Rate),
 	)
+
+	// 写入文件
+	if len(codes) > 0 {
+		dir, _ := os.UserHomeDir()
+		if dir == "" {
+			dir = "."
+		}
+		dir = filepath.Join(dir, "claim-codes")
+		os.MkdirAll(dir, 0755)
+		fname := filepath.Join(dir, fmt.Sprintf("codes-%s.txt", task.ID))
+		f, err := os.Create(fname)
+		if err == nil {
+			for _, code := range codes {
+				f.WriteString(code + "\n")
+			}
+			f.Close()
+			logger.Info("claim codes saved", zap.String("file", fname))
+		}
+	}
 }

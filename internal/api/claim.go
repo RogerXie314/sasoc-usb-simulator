@@ -126,6 +126,51 @@ func (ch *claimHandler) countsClaim(c *gin.Context) {
 	})
 }
 
+// loginClaim POST /api/v1/claim/login
+// 仅登录SASOC平台，返回完整Token和SessionID，不启动生成任务
+func (ch *claimHandler) loginClaim(c *gin.Context) {
+	var req struct {
+		PlatformURL string `json:"platformUrl"` // 平台地址，如 https://192.168.123.24:8440
+		Username    string `json:"username" binding:"required"`
+		Password    string `json:"password" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		responseError(c, http.StatusBadRequest, "invalid request: "+err.Error())
+		return
+	}
+
+	// 如果已有任务在运行，拒绝登录
+	if claimgen.GetActiveTask() != nil && claimgen.GetActiveTask().Status == "running" {
+		responseError(c, http.StatusConflict, "已有申领码生成任务在运行中")
+		return
+	}
+
+	// 自动登录
+	result, err := claimgen.Login(req.PlatformURL, req.Username, req.Password)
+	if err != nil {
+		responseError(c, http.StatusUnauthorized, fmt.Sprintf("登录失败: %s", err.Error()))
+		return
+	}
+	if result.Error != "" {
+		responseError(c, http.StatusUnauthorized, fmt.Sprintf("登录失败: %s", result.Error))
+		return
+	}
+	if result.Token == "" {
+		responseError(c, http.StatusUnauthorized, "登录成功但未获取到Token")
+		return
+	}
+
+	// 保存登录凭证供状态查询
+	claimgen.SetLoginCredential(result)
+
+	responseSuccess(c, gin.H{
+		"loggedIn":  true,
+		"token":     result.Token,
+		"sessionId": result.SessionID,
+		"message":   "登录成功",
+	})
+}
+
 // loginAndStartClaim POST /api/v1/claim/login-and-start
 // 自动登录SASOC平台并启动批量申领码生成任务
 func (ch *claimHandler) loginAndStartClaim(c *gin.Context) {

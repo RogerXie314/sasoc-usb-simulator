@@ -96,7 +96,7 @@ html,body,#app{height:100%;font-family:'Microsoft YaHei','PingFang SC',sans-seri
     <div class="logo">
       <span class="dot"></span>
       移动介质安检站模拟测试工具
-      <span class="app-version">V2.8.6</span>
+      <span class="app-version">V2.9.7</span>
     </div>
     <div class="header-right">
       <div class="sasoc-config" @click="showSasocDialog" title="点击修改SASOC服务器地址">
@@ -2139,8 +2139,8 @@ const ClaimPage = {
             <el-input v-model="loginForm.password" type="password" placeholder="请输入密码" show-password style="width:240px" />
           </el-form-item>
           <el-form-item>
-            <el-button type="primary" @click="checkLoginStatus" :loading="checkingLogin">
-              <el-icon><Refresh /></el-icon> 刷新登录状态
+            <el-button type="primary" @click="doLogin" :loading="checkingLogin">
+              <el-icon><User /></el-icon> 登录
             </el-button>
             <span v-if="loginStatus.loggedIn" style="margin-left:12px;color:#67c23a;font-size:13px">
               <el-icon><CircleCheck /></el-icon> 已登录 (session: {{loginStatus.sessionId}})
@@ -2187,7 +2187,9 @@ const ClaimPage = {
         username: '',
         password: '',
       },
-      loginStatus: { loggedIn: false, sessionId: '' },
+      loginStatus: { loggedIn: false, sessionId: '', token: '' },
+      loginToken: '', // 存储完整的 token 供生成使用
+      loginSessionId: '', // 存储完整的 sessionId 供生成使用
       form: {
         total: 100000,
         concurrent: 10,
@@ -2232,6 +2234,28 @@ const ClaimPage = {
         // ignore
       }
     },
+    async doLogin() {
+      if (!this.loginForm.username || !this.loginForm.password) {
+        ElementPlus.ElMessage.warning('请输入用户名和密码');
+        return;
+      }
+      this.checkingLogin = true;
+      try {
+        const r = await apiPost('/claim/login', {
+          platformUrl: this.loginForm.platformUrl,
+          username: this.loginForm.username,
+          password: this.loginForm.password,
+        });
+        ElementPlus.ElMessage.success('登录成功，请点击「开始生成」启动任务');
+        this.loginStatus = { loggedIn: true, sessionId: r.sessionId ? r.sessionId.substring(0, 8) + '...' : '' };
+        this.loginToken = r.token || '';
+        this.loginSessionId = r.sessionId || '';
+      } catch (e) {
+        ElementPlus.ElMessage.error('登录失败: ' + (e.message || '未知错误'));
+      } finally {
+        this.checkingLogin = false;
+      }
+    },
     async checkLoginStatus() {
       this.checkingLogin = true;
       try {
@@ -2243,7 +2267,7 @@ const ClaimPage = {
         if (r && r.loggedIn) {
           ElementPlus.ElMessage.success('已登录 SASOC 平台');
         } else {
-          ElementPlus.ElMessage.info('未登录，请先输入账号密码并开始生成');
+          ElementPlus.ElMessage.info('未登录');
         }
       } catch (e) {
         ElementPlus.ElMessage.error('查询登录状态失败');
@@ -2252,21 +2276,23 @@ const ClaimPage = {
       }
     },
     async startClaim() {
-      if (!this.loginForm.username || !this.loginForm.password) {
-        ElementPlus.ElMessage.warning('请输入用户名和密码');
+      if (!this.loginToken || !this.loginSessionId) {
+        ElementPlus.ElMessage.warning('请先点击「登录」按钮登录 SASOC 平台');
+        return;
+      }
+      if (this.stats.status === 'running') {
+        ElementPlus.ElMessage.warning('已有任务在运行中');
         return;
       }
       this.starting = true;
       try {
-        const r = await apiPost('/claim/login-and-start', {
-          platformUrl: this.loginForm.platformUrl,
-          username: this.loginForm.username,
-          password: this.loginForm.password,
+        const r = await apiPost('/claim/start', {
+          token: this.loginToken,
+          sessionId: this.loginSessionId,
           total: this.form.total,
           concurrent: this.form.concurrent,
         });
-        ElementPlus.ElMessage.success('登录成功，申领码生成任务已启动');
-        this.loginStatus = { loggedIn: true, sessionId: r.sessionId ? r.sessionId.substring(0, 8) + '...' : '' };
+        ElementPlus.ElMessage.success('申领码生成任务已启动');
         this.loadStats();
       } catch (e) {
         ElementPlus.ElMessage.error('启动失败: ' + (e.message || '未知错误'));

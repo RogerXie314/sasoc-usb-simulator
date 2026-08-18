@@ -152,6 +152,7 @@ func SetupRouter(h *hub.Hub, cfg *config.Config) *gin.Engine {
 		v1.POST("/claim/cancel", claimHandler.cancelClaim)
 		v1.GET("/claim/export", claimHandler.exportClaim)
 		v1.GET("/claim/counts", claimHandler.countsClaim)
+		v1.POST("/claim/login", claimHandler.loginClaim)
 		v1.POST("/claim/login-and-start", claimHandler.loginAndStartClaim)
 		v1.GET("/claim/login-status", claimHandler.loginStatusClaim)
 	}

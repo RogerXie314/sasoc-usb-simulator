@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
@@ -27,7 +28,12 @@ type LoginResult struct {
 // Login 模拟登录SASOC平台
 // 流程: GET /login/getPublicKey -> RSA加密密码 -> POST /login/userLogin -> 获取token
 func Login(platformURL, username, password string) (*LoginResult, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
 	logger := zap.L()
 
 	// Step 1: 获取RSA公钥

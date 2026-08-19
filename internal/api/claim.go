@@ -10,7 +10,6 @@ import (
 	"github.com/usb-simulator/internal/hub"
 )
 
-// claimHandler 申领码生成 API
 type claimHandler struct {
 	hub *hub.Hub
 }
@@ -22,33 +21,36 @@ func newClaimHandler(h *hub.Hub) *claimHandler {
 // startClaim POST /api/v1/claim/start
 func (ch *claimHandler) startClaim(c *gin.Context) {
 	var req struct {
-		Token      string `json:"token" binding:"required"`
-		SessionID  string `json:"sessionId" binding:"required"`
-		Total      int    `json:"total"`
-		Concurrent int    `json:"concurrent"`
+		Token         string `json:"token" binding:"required"`
+		SessionID     string `json:"sessionId" binding:"required"`
+		Total         int    `json:"total"`
+		Concurrent    int    `json:"concurrent"`
+		ApplicantName string `json:"applicantName"`
+		ApplicantCode string `json:"applicantCode"`
+		FactoryIds    string `json:"factoryIds"`
+		Capacity      string `json:"capacity"`
+		Format        string `json:"format"`
+		StartTime     string `json:"startTime"`
+		EndTime       string `json:"endTime"`
+		DurationHours int    `json:"durationHours"`
+		Phone         string `json:"phone"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		responseError(c, http.StatusBadRequest, "invalid request: "+err.Error())
 		return
 	}
-
 	task, err := claimgen.StartTask(claimgen.Config{
-		Token:      req.Token,
-		SessionID:  req.SessionID,
-		Total:      req.Total,
-		Concurrent: req.Concurrent,
+		Token:         req.Token, SessionID: req.SessionID,
+		Total:         req.Total, Concurrent: req.Concurrent,
+		ApplicantName: req.ApplicantName, ApplicantCode: req.ApplicantCode,
+		FactoryIds: req.FactoryIds, Capacity: req.Capacity, Format: req.Format,
+		StartTime: req.StartTime, EndTime: req.EndTime, DurationHours: req.DurationHours, Phone: req.Phone,
 	}, ch.hub.DB())
 	if err != nil {
 		responseError(c, http.StatusConflict, err.Error())
 		return
 	}
-
-	responseSuccess(c, gin.H{
-		"taskId":  task.ID,
-		"status":  task.Status,
-		"total":   task.Total,
-		"message": "任务已启动",
-	})
+	responseSuccess(c, gin.H{"taskId": task.ID, "status": task.Status, "total": task.Total, "message": "OK"})
 }
 
 // statusClaim GET /api/v1/claim/status
@@ -59,32 +61,25 @@ func (ch *claimHandler) statusClaim(c *gin.Context) {
 		return
 	}
 	responseSuccess(c, gin.H{
-		"taskId":    task.ID,
-		"status":    task.Status,
-		"total":     task.Total,
-		"success":   task.Success,
-		"failed":    task.Failed,
-		"rate":      task.Rate,
-		"elapsed":   task.Elapsed,
-		"startedAt": task.StartedAt,
-		"updatedAt": task.UpdatedAt,
+		"taskId": task.ID, "status": task.Status, "total": task.Total,
+		"success": task.Success, "failed": task.Failed, "rate": task.Rate, "elapsed": task.Elapsed,
+		"startedAt": task.StartedAt, "updatedAt": task.UpdatedAt,
 	})
 }
 
 // cancelClaim POST /api/v1/claim/cancel
 func (ch *claimHandler) cancelClaim(c *gin.Context) {
 	claimgen.CancelTask()
-	responseSuccess(c, gin.H{"message": "已取消"})
+	responseSuccess(c, gin.H{"message": "OK"})
 }
 
 // exportClaim GET /api/v1/claim/export
 func (ch *claimHandler) exportClaim(c *gin.Context) {
 	task := claimgen.GetActiveTask()
 	if task == nil || len(task.Codes) == 0 {
-		responseError(c, http.StatusNotFound, "无可用数据")
+		responseError(c, http.StatusNotFound, "no data")
 		return
 	}
-
 	format := c.DefaultQuery("format", "json")
 	if format == "txt" {
 		c.Header("Content-Type", "text/plain; charset=utf-8")
@@ -94,7 +89,6 @@ func (ch *claimHandler) exportClaim(c *gin.Context) {
 		}
 		return
 	}
-
 	c.Header("Content-Type", "application/json; charset=utf-8")
 	c.Header("Content-Disposition", "attachment; filename=apply_codes.json")
 	c.JSON(http.StatusOK, task.Codes)
@@ -103,34 +97,23 @@ func (ch *claimHandler) exportClaim(c *gin.Context) {
 // countsClaim GET /api/v1/claim/counts
 func (ch *claimHandler) countsClaim(c *gin.Context) {
 	count, _ := strconv.Atoi(c.DefaultQuery("n", "1000"))
-	if count > 10000 {
-		count = 10000
-	}
+	if count > 10000 { count = 10000 }
 	task := claimgen.GetActiveTask()
 	if task == nil || len(task.Codes) == 0 {
 		responseSuccess(c, gin.H{"codes": []string{}, "count": 0, "total": 0})
 		return
 	}
 	start := 0
-	if s, err := strconv.Atoi(c.Query("start")); err == nil && s >= 0 && s < len(task.Codes) {
-		start = s
-	}
+	if s, err := strconv.Atoi(c.Query("start")); err == nil && s >= 0 && s < len(task.Codes) { start = s }
 	end := start + count
-	if end > len(task.Codes) {
-		end = len(task.Codes)
-	}
-	responseSuccess(c, gin.H{
-		"codes": task.Codes[start:end],
-		"count": end - start,
-		"total": len(task.Codes),
-	})
+	if end > len(task.Codes) { end = len(task.Codes) }
+	responseSuccess(c, gin.H{"codes": task.Codes[start:end], "count": end - start, "total": len(task.Codes)})
 }
 
 // loginClaim POST /api/v1/claim/login
-// 仅登录SASOC平台，返回完整Token和SessionID，不启动生成任务
 func (ch *claimHandler) loginClaim(c *gin.Context) {
 	var req struct {
-		PlatformURL string `json:"platformUrl"` // 平台地址，如 https://192.168.123.24:8440
+		PlatformURL string `json:"platformUrl"`
 		Username    string `json:"username" binding:"required"`
 		Password    string `json:"password" binding:"required"`
 	}
@@ -138,119 +121,79 @@ func (ch *claimHandler) loginClaim(c *gin.Context) {
 		responseError(c, http.StatusBadRequest, "invalid request: "+err.Error())
 		return
 	}
-
-	// 如果已有任务在运行，拒绝登录
-	if claimgen.GetActiveTask() != nil && claimgen.GetActiveTask().Status == "running" {
-		responseError(c, http.StatusConflict, "已有申领码生成任务在运行中")
-		return
-	}
-
-	// 自动登录
 	result, err := claimgen.Login(req.PlatformURL, req.Username, req.Password)
 	if err != nil {
-		responseError(c, http.StatusUnauthorized, fmt.Sprintf("登录失败: %s", err.Error()))
+		responseError(c, http.StatusUnauthorized, fmt.Sprintf("login failed: %s", err.Error()))
 		return
 	}
 	if result.Error != "" {
-		responseError(c, http.StatusUnauthorized, fmt.Sprintf("登录失败: %s", result.Error))
+		responseError(c, http.StatusUnauthorized, fmt.Sprintf("login failed: %s", result.Error))
 		return
 	}
 	if result.Token == "" {
-		responseError(c, http.StatusUnauthorized, "登录成功但未获取到Token")
+		responseError(c, http.StatusUnauthorized, "no token")
 		return
 	}
-
-	// 保存登录凭证供状态查询
 	claimgen.SetLoginCredential(result)
-
-	responseSuccess(c, gin.H{
-		"loggedIn":  true,
-		"token":     result.Token,
-		"sessionId": result.SessionID,
-		"message":   "登录成功",
-	})
+	responseSuccess(c, gin.H{"loggedIn": true, "token": result.Token, "sessionId": result.SessionID, "message": "OK"})
 }
 
-// loginAndStartClaim POST /api/v1/claim/login-and-start
-// 自动登录SASOC平台并启动批量申领码生成任务
-func (ch *claimHandler) loginAndStartClaim(c *gin.Context) {
+// startLifecycle POST /api/v1/claim/lifecycle/start
+func (ch *claimHandler) startLifecycle(c *gin.Context) {
 	var req struct {
-		PlatformURL string `json:"platformUrl"` // 平台地址，如 https://192.168.123.24:8440
-		Username    string `json:"username" binding:"required"`
-		Password    string `json:"password" binding:"required"`
-		Total       int    `json:"total"`      // 目标数量，默认 100000
-		Concurrent  int    `json:"concurrent"` // 并发数，默认 10
+		Token        string   `json:"token" binding:"required"`
+		SessionID    string   `json:"sessionId" binding:"required"`
+		Concurrent   int      `json:"concurrent"`
+		ClaimedPct   int      `json:"claimedPct"`
+		BorrowedPct  int      `json:"borrowedPct"`
+		ReturnedPct  int      `json:"returnedPct"`
+		ExpiredPct   int      `json:"expiredPct"`
+		Codes        []string `json:"codes" binding:"required"`
+		StationSN    string   `json:"stationSn"`
+		ApplicantName string  `json:"applicantName"`
+		ApplicantCode string  `json:"applicantCode"`
+		FactoryIds    string  `json:"factoryIds"`
+		Capacity      string  `json:"capacity"`
+		Format        string  `json:"format"`
+		StartTime     string  `json:"startTime"`
+		EndTime       string  `json:"endTime"`
+		DurationHours int     `json:"durationHours"`
+		Phone         string  `json:"phone"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		responseError(c, http.StatusBadRequest, "invalid request: "+err.Error())
 		return
 	}
-
-	// 如果已有任务在运行，先检查
-	if claimgen.GetActiveTask() != nil && claimgen.GetActiveTask().Status == "running" {
-		responseError(c, http.StatusConflict, "已有申领码生成任务在运行中")
-		return
-	}
-
-	// 自动登录
-	result, err := claimgen.Login(req.PlatformURL, req.Username, req.Password)
-	if err != nil {
-		responseError(c, http.StatusUnauthorized, fmt.Sprintf("登录失败: %s", err.Error()))
-		return
-	}
-	if result.Error != "" {
-		responseError(c, http.StatusUnauthorized, fmt.Sprintf("登录失败: %s", result.Error))
-		return
-	}
-	if result.Token == "" {
-		responseError(c, http.StatusUnauthorized, "登录成功但未获取到Token")
-		return
-	}
-
-	// 保存登录凭证供状态查询
-	claimgen.SetLoginCredential(result)
-
-	// 启动任务
-	task, err := claimgen.StartTask(claimgen.Config{
-		PlatformURL: req.PlatformURL,
-		Token:       result.Token,
-		SessionID:   result.SessionID,
-		Total:       req.Total,
-		Concurrent:  req.Concurrent,
-	}, ch.hub.DB())
+	task, err := claimgen.StartLifecycle(claimgen.LifecycleConfig{
+		Token: req.Token, SessionID: req.SessionID, Concurrent: req.Concurrent,
+		ClaimedPct: req.ClaimedPct, BorrowedPct: req.BorrowedPct,
+		ReturnedPct: req.ReturnedPct, ExpiredPct: req.ExpiredPct,
+		Codes: req.Codes, StationSN: req.StationSN,
+	})
 	if err != nil {
 		responseError(c, http.StatusConflict, err.Error())
 		return
 	}
-
-	responseSuccess(c, gin.H{
-		"taskId":    task.ID,
-		"status":    task.Status,
-		"total":     task.Total,
-		"sessionId": result.SessionID,
-		"message":   "登录成功，任务已启动",
-	})
+	responseSuccess(c, gin.H{"taskId": task.ID, "status": task.Status, "total": task.Total, "message": "OK"})
 }
 
-// loginStatusClaim GET /api/v1/claim/login-status
-// 查询当前登录状态
-func (ch *claimHandler) loginStatusClaim(c *gin.Context) {
-	cred := claimgen.GetLoginCredential()
-	if cred == nil {
-		responseSuccess(c, gin.H{"loggedIn": false, "message": "未登录"})
+// statusLifecycle GET /api/v1/claim/lifecycle/status
+func (ch *claimHandler) statusLifecycle(c *gin.Context) {
+	task := claimgen.GetLifecycleTask()
+	if task == nil {
+		responseSuccess(c, gin.H{"status": "none"})
 		return
 	}
-
 	responseSuccess(c, gin.H{
-		"loggedIn":  true,
-		"sessionId": cred.SessionID,
-		"token":     cred.Token[:min(20, len(cred.Token))] + "...", // 脱敏展示
+		"taskId": task.ID, "status": task.Status, "total": task.Total,
+		"claimed": task.Claimed, "borrowed": task.Borrowed, "returned": task.Returned,
+		"expired": task.Expired, "failed": task.Failed, "elapsed": task.Elapsed,
+		"startedAt": task.StartedAt, "updatedAt": task.UpdatedAt,
 	})
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
+// cancelLifecycle POST /api/v1/claim/lifecycle/cancel
+func (ch *claimHandler) cancelLifecycle(c *gin.Context) {
+	claimgen.CancelLifecycle()
+	responseSuccess(c, gin.H{"message": "OK"})
 }

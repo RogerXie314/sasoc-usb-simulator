@@ -96,7 +96,7 @@ html,body,#app{height:100%;font-family:'Microsoft YaHei','PingFang SC',sans-seri
     <div class="logo">
       <span class="dot"></span>
       移动介质安检站模拟测试工具
-      <span class="app-version">V2.9.7</span>
+      <span class="app-version">V2.9.8</span>
     </div>
     <div class="header-right">
       <div class="sasoc-config" @click="showSasocDialog" title="点击修改SASOC服务器地址">
@@ -1150,7 +1150,8 @@ const StationPage = {
     // 每5秒刷新聚合统计
     this.statsTimer = setInterval(() => { this.loadStats(); }, 5000);
   },
-  beforeUnmount() { if (this.unsub) this.unsub(); if (this._pollTimer) clearInterval(this._pollTimer); if (this.statsTimer) clearInterval(this.statsTimer); }
+  beforeUnmount() { if (this.unsub) this.unsub(); if (this._pollTimer) clearInterval(this._pollTimer); if (this.statsTimer) clearInterval(this.statsTimer);
+    if (this.lcTimer) clearInterval(this.lcTimer); }
 };
 
 // ----- USB Plugin -----
@@ -2073,10 +2074,12 @@ const PressurePage = {
     this.loadStats();
     this.unsub = wsManager.onMessage(this.handleWs);
     this.statsTimer = setInterval(this.loadStats, 3000);
+    this.lcTimer = setInterval(this.loadLifecycle, 3000);
   },
   beforeUnmount() {
     if (this.unsub) this.unsub();
     if (this.statsTimer) clearInterval(this.statsTimer);
+    if (this.lcTimer) clearInterval(this.lcTimer);
   }
 };
 
@@ -2115,7 +2118,7 @@ const ClaimPage = {
       </div>
 
       <!-- 运行状态 -->
-      <el-card v-if="stats.status==='running'" style="margin-bottom:20px" body-style="padding:16px 20px">
+      <el-card v-if="stats.status==='running'" style="margin-bottom:16px" body-style="padding:12px 16px">
         <div style="display:flex;align-items:center;gap:16px">
           <el-tag type="success" effect="dark" size="large">生成中</el-tag>
           <span style="font-size:14px;color:#606266">任务ID: {{stats.taskId}}</span>
@@ -2125,63 +2128,76 @@ const ClaimPage = {
         </div>
       </el-card>
 
-      <!-- 登录配置 -->
-      <el-card style="margin-bottom:20px">
+      <!-- 登录（全宽紧凑） -->
+      <el-card style="margin-bottom:16px">
         <template #header><span style="font-weight:600">SASOC 平台登录</span></template>
-        <el-form :model="loginForm" label-width="120px" size="default">
-          <el-form-item label="平台地址">
-            <el-input v-model="loginForm.platformUrl" placeholder="如 https://192.168.123.24:8440" style="width:360px" />
-          </el-form-item>
-          <el-form-item label="用户名">
-            <el-input v-model="loginForm.username" placeholder="请输入用户名" style="width:240px" />
-          </el-form-item>
-          <el-form-item label="密码">
-            <el-input v-model="loginForm.password" type="password" placeholder="请输入密码" show-password style="width:240px" />
-          </el-form-item>
+        <el-form :model="loginForm" label-width="80px" size="default" inline>
+          <el-form-item label="地址"><el-input v-model="loginForm.platformUrl" style="width:300px" /></el-form-item>
+          <el-form-item label="用户名"><el-input v-model="loginForm.username" style="width:160px" /></el-form-item>
+          <el-form-item label="密码"><el-input v-model="loginForm.password" type="password" style="width:160px" show-password /></el-form-item>
           <el-form-item>
-            <el-button type="primary" @click="doLogin" :loading="checkingLogin">
-              <el-icon><User /></el-icon> 登录
-            </el-button>
-            <span v-if="loginStatus.loggedIn" style="margin-left:12px;color:#67c23a;font-size:13px">
-              <el-icon><CircleCheck /></el-icon> 已登录 (session: {{loginStatus.sessionId}})
-            </span>
-            <span v-else style="margin-left:12px;color:#909399;font-size:13px">
-              <el-icon><CircleClose /></el-icon> 未登录
-            </span>
+            <el-button type="primary" @click="doLogin" :loading="checkingLogin"><el-icon><User /></el-icon> 登录</el-button>
+            <span v-if="loginStatus.loggedIn" style="margin-left:8px;color:#67c23a;font-size:13px"><el-icon><CircleCheck /></el-icon> 已登录</span>
+            <span v-else style="margin-left:8px;color:#909399;font-size:13px"><el-icon><CircleClose /></el-icon> 未登录</span>
           </el-form-item>
         </el-form>
       </el-card>
 
-      <!-- 生成配置 -->
-      <el-card style="margin-bottom:20px">
-        <template #header><span style="font-weight:600">生成配置</span></template>
-        <el-form :model="form" label-width="120px" size="default">
-          <el-form-item label="生成数量">
-            <el-input-number v-model="form.total" :min="1" :max="1000000" :step="1000" style="width:200px" />
-            <span style="margin-left:12px;font-size:12px;color:#909399">目标生成申领码数量</span>
-          </el-form-item>
-          <el-form-item label="并发数">
-            <el-input-number v-model="form.concurrent" :min="1" :max="20" style="width:200px" />
-            <span style="margin-left:12px;font-size:12px;color:#909399">同时并发请求数 (1-20)</span>
-          </el-form-item>
-          <el-form-item>
-            <el-button type="danger" size="large" @click="startClaim" :disabled="stats.status==='running'" :loading="starting">
-              <el-icon><VideoPlay /></el-icon> 开始生成
-            </el-button>
-            <el-button type="warning" size="large" @click="stopClaim" :disabled="stats.status!=='running'" style="margin-left:12px">
-              <el-icon><VideoPause /></el-icon> 停止生成
-            </el-button>
-            <el-button size="large" @click="exportCodes" :disabled="!hasCodes" style="margin-left:12px">
-              <el-icon><Download /></el-icon> 导出结果
-            </el-button>
-          </el-form-item>
-        </el-form>
-      </el-card>
+      <!-- 两列：生成配置 + 生命周期 -->
+      <el-row :gutter="16">
+        <el-col :span="12">
+          <el-card style="margin-bottom:16px">
+            <template #header><span style="font-weight:600">生成配置</span></template>
+            <el-form :model="form" label-width="80px" size="default">
+              <el-row :gutter="12">
+                <el-col :span="8"><el-form-item label="申领人"><el-input v-model="form.applicantName" /></el-form-item></el-col>
+                <el-col :span="8"><el-form-item label="工号"><el-input v-model="form.applicantCode" /></el-form-item></el-col>
+                <el-col :span="8"><el-form-item label="手机号"><el-input v-model="form.phone" /></el-form-item></el-col>
+              </el-row>
+              <el-row :gutter="12">
+                <el-col :span="8"><el-form-item label="区域"><el-input v-model="form.factoryIds" placeholder="逗号分隔" /></el-form-item></el-col>
+                <el-col :span="8"><el-form-item label="容量"><el-select v-model="form.capacity" style="width:100%"><el-option label="8G" value="8G" /><el-option label="16G" value="16G" /><el-option label="64G" value="64G" /></el-select></el-form-item></el-col>
+                <el-col :span="8"><el-form-item label="格式"><el-select v-model="form.format" style="width:100%"><el-option label="FAT32" value="FAT32" /><el-option label="exFAT" value="exFAT" /><el-option label="NTFS" value="NTFS" /></el-select></el-form-item></el-col>
+              </el-row>
+              <el-row :gutter="12">
+                <el-col :span="8"><el-form-item label="时长(h)"><el-input-number v-model="form.durationHours" :min="1" :max="720" style="width:100%" /></el-form-item></el-col>
+                <el-col :span="8"><el-form-item label="数量"><el-input-number v-model="form.total" :min="1" :max="1000000" :step="1000" style="width:100%" /></el-form-item></el-col>
+                <el-col :span="8"><el-form-item label="并发数"><el-input-number v-model="form.concurrent" :min="1" :max="20" style="width:100%" /></el-form-item></el-col>
+              </el-row>
+              <el-form-item>
+                <el-button type="danger" size="large" @click="startClaim" :disabled="stats.status==='running'" :loading="starting"><el-icon><VideoPlay /></el-icon> 开始生成</el-button>
+                <el-button type="warning" size="large" @click="stopClaim" :disabled="stats.status!=='running'" style="margin-left:8px"><el-icon><VideoPause /></el-icon> 停止</el-button>
+                <el-button size="large" @click="exportCodes" :disabled="!hasCodes" style="margin-left:8px"><el-icon><Download /></el-icon> 导出</el-button>
+              </el-form-item>
+            </el-form>
+          </el-card>
+        </el-col>
+        <el-col :span="12">
+          <el-card style="margin-bottom:16px">
+            <template #header><span style="font-weight:600">生命周期配置</span><span style="font-size:12px;color:#909399;margin-left:8px;font-weight:400">使用说明：先生成申领码，再设比例启动。已领取=CMD103+104，已归还=CMD105，已超时由endTime控制。</span></template>
+            <div v-if="!hasCodes" style="text-align:center;padding:20px;color:#909399;font-size:13px"><div>请先生成申领码，再使用生命周期功能</div></div>
+            <el-form v-else :model="lcForm" label-width="110px" size="default">
+              <el-form-item label="终端SN"><el-input v-model="lcForm.stationSn" placeholder="留空自动选择" style="width:200px" /></el-form-item>
+              <el-form-item label="已领取比例(%)"><el-slider v-model="lcForm.borrowedPct" :max="100" show-input style="width:260px" /></el-form-item>
+              <el-form-item label="已归还比例(%)"><el-slider v-model="lcForm.returnedPct" :max="100" show-input style="width:260px" /></el-form-item>
+              <el-form-item label="已超时比例(%)"><el-slider v-model="lcForm.expiredPct" :max="30" show-input style="width:260px" /></el-form-item>
+              <el-form-item label="并发数"><el-input-number v-model="lcForm.concurrent" :min="1" :max="10" style="width:200px" /></el-form-item>
+              <el-form-item>
+                <el-button type="success" size="large" @click="startLifecycle" :loading="lcStarting">启动生命周期</el-button>
+                <el-button type="warning" size="large" @click="stopLifecycle" style="margin-left:8px">停止</el-button>
+              </el-form-item>
+            </el-form>
+            <div v-if="lcStatus.status==='running'" style="margin-top:12px;padding:12px;background:#f0f9eb;border-radius:4px">
+              <el-tag type="success" size="small">运行中</el-tag>
+              <span style="margin-left:8px;font-size:12px">已领取:{{lcStatus.borrowed}} 已归还:{{lcStatus.returned}} 已超时:{{lcStatus.expired}} 失败:{{lcStatus.failed}} 耗时:{{lcStatus.elapsed}}s</span>
+            </div>
+          </el-card>
+        </el-col>
+      </el-row>
     </div>
   `,
   data() {
-    return {
-      stats: { status: 'none', taskId: '', total: 0, success: 0, failed: 0, rate: 0, elapsed: 0 },
+    return {      stats: { status: 'none', taskId: '', total: 0, success: 0, failed: 0, rate: 0, elapsed: 0 },
       loginForm: {
         platformUrl: 'https://192.168.123.24:8440',
         username: '',
@@ -2193,7 +2209,21 @@ const ClaimPage = {
       form: {
         total: 100000,
         concurrent: 10,
+        applicantName: "batch",
+        applicantCode: "00001",
+        phone: "138",
+        factoryIds: "3",
+        capacity: "16G",
+        format: "FAT32",
+        durationHours: 24,
       },
+      lcForm: {
+        claimedPct: 100, borrowedPct: 0, returnedPct: 0, expiredPct: 0,
+        concurrent: 5, stationSn: "",
+      },
+      lcStatus: { status: "none", claimed: 0, borrowed: 0, returned: 0, expired: 0, failed: 0, elapsed: 0 },
+      lcStarting: false,
+      lcTimer: null,
       starting: false,
       checkingLogin: false,
       statsTimer: null,
@@ -2291,6 +2321,13 @@ const ClaimPage = {
           sessionId: this.loginSessionId,
           total: this.form.total,
           concurrent: this.form.concurrent,
+          applicantName: this.form.applicantName,
+          applicantCode: this.form.applicantCode,
+          phone: this.form.phone,
+          factoryIds: this.form.factoryIds,
+          capacity: this.form.capacity,
+          format: this.form.format,
+          durationHours: this.form.durationHours,
         });
         ElementPlus.ElMessage.success('申领码生成任务已启动');
         this.loadStats();
@@ -2309,7 +2346,7 @@ const ClaimPage = {
         ElementPlus.ElMessage.error('取消失败: ' + e.message);
       }
     },
-    async exportCodes() {
+    async startLifecycle() { if (!this.loginToken) { ElementPlus.ElMessage.warning("请先登录"); return; } this.lcStarting = true; try { await apiPost("/claim/lifecycle/start", { token: this.loginToken, sessionId: this.loginSessionId, concurrent: this.lcForm.concurrent||5, claimedPct: this.lcForm.claimedPct, borrowedPct: this.lcForm.borrowedPct, returnedPct: this.lcForm.returnedPct, expiredPct: this.lcForm.expiredPct, stationSn: this.lcForm.stationSn, codes: [] }); ElementPlus.ElMessage.success("生命周期任务已启动"); this.loadLifecycle(); } catch(e) { ElementPlus.ElMessage.error("启动失败"); } finally { this.lcStarting = false; } }, async stopLifecycle() { try { await apiPost("/claim/lifecycle/cancel"); this.loadLifecycle(); } catch(e) {} }, async loadLifecycle() { try { const r = await apiGet("/claim/lifecycle/status"); if (r && r.status!=="none") this.lcStatus = r; } catch(e) {} }, async exportCodes() {
       try {
         const a = document.createElement('a');
         a.href = API_BASE + '/claim/export?format=json';
@@ -2325,9 +2362,11 @@ const ClaimPage = {
     this.loadStats();
     this.checkLoginStatus();
     this.statsTimer = setInterval(this.loadStats, 3000);
+    this.lcTimer = setInterval(this.loadLifecycle, 3000);
   },
   beforeUnmount() {
     if (this.statsTimer) clearInterval(this.statsTimer);
+    if (this.lcTimer) clearInterval(this.lcTimer);
   }
 };
 

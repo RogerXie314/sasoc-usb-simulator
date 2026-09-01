@@ -2459,6 +2459,7 @@ const ClaimPage = {
         const r = await apiPost('/claim/start', {
           token: this.loginToken,
           sessionId: this.loginSessionId,
+          platformUrl: this.loginForm.platformUrl,
           total: this.form.total,
           concurrent: this.form.concurrent,
           applicantName: this.form.applicantName,

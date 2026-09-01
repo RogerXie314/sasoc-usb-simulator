@@ -134,6 +134,16 @@ func (ch *claimHandler) countsClaim(c *gin.Context) {
 	responseSuccess(c, gin.H{"codes": task.Codes[start:end], "count": end - start, "total": len(task.Codes)})
 }
 
+// loginStatus GET /api/v1/claim/login-status
+func (ch *claimHandler) loginStatus(c *gin.Context) {
+	cred := claimgen.GetLoginCredential()
+	if cred != nil && cred.Token != "" {
+		responseSuccess(c, gin.H{"loggedIn": true, "sessionId": cred.SessionID})
+		return
+	}
+	responseSuccess(c, gin.H{"loggedIn": false})
+}
+
 // loginClaim POST /api/v1/claim/login
 func (ch *claimHandler) loginClaim(c *gin.Context) {
 	var req struct {

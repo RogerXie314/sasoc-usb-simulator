@@ -56,6 +56,7 @@ type pressureManager struct {
 	logsSent   atomic.Int64
 	errors     atomic.Int64
 	startTime  time.Time
+	endTime    time.Time
 	stationCnt int
 	startStr   string
 }
@@ -137,6 +138,7 @@ func (ph *pressureHandler) startPressure(c *gin.Context) {
 	mgr.logsSent.Store(0)
 	mgr.errors.Store(0)
 	mgr.startTime = time.Now()
+	mgr.endTime = time.Time{}
 	mgr.stationCnt = count
 	mgr.startStr = mgr.startTime.Format("2006-01-02 15:04:05")
 	mgr.running.Store(true)
@@ -167,6 +169,7 @@ func (ph *pressureHandler) stopPressure(c *gin.Context) {
 		return
 	}
 	mgr.running.Store(false)
+	mgr.endTime = time.Now()
 	if mgr.stopCh != nil {
 		close(mgr.stopCh)
 		mgr.stopCh = nil
@@ -196,6 +199,22 @@ func (ph *pressureHandler) getStatsInternal() PressureTestStats {
 			Elapsed:      int64(time.Since(mgr.startTime).Seconds()),
 		}
 	}
+	// 任务已结束，返回最终统计（保持显示）
+	if !mgr.endTime.IsZero() {
+		elapsed := int64(mgr.endTime.Sub(mgr.startTime).Seconds())
+		if elapsed < 0 {
+			elapsed = 0
+		}
+		return PressureTestStats{
+			Running:      false,
+			StationCount: mgr.stationCnt,
+			AlarmsSent:   mgr.alarmsSent.Load(),
+			LogsSent:     mgr.logsSent.Load(),
+			Errors:       mgr.errors.Load(),
+			StartTime:    mgr.startStr,
+			Elapsed:      elapsed,
+		}
+	}
 	return PressureTestStats{Running: false}
 }
 
@@ -222,6 +241,7 @@ func (ph *pressureHandler) runPressure(stations []*simulator.SimStation, cfg Pre
 		case <-deadline:
 			mgr.mu.Lock()
 			mgr.running.Store(false)
+			mgr.endTime = time.Now()
 			if mgr.stopCh != nil {
 				close(mgr.stopCh)
 				mgr.stopCh = nil

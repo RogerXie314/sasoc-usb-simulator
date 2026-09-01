@@ -96,7 +96,7 @@ html,body,#app{height:100%;font-family:'Microsoft YaHei','PingFang SC',sans-seri
     <div class="logo">
       <span class="dot"></span>
       移动介质安检站模拟测试工具
-      <span class="app-version">V2.9.9</span>
+      <span class="app-version">V3.0.0</span>
     </div>
     <div class="header-right">
       <div class="sasoc-config" @click="showSasocDialog" title="点击修改SASOC服务器地址">
@@ -2339,13 +2339,13 @@ const ClaimPage = {
   data() {
     return {      stats: { status: 'none', taskId: '', total: 0, success: 0, failed: 0, rate: 0, elapsed: 0 },
       loginForm: {
-        platformUrl: 'https://192.168.123.24:8440',
+        platformUrl: localStorage.getItem('claimPlatformUrl') || 'https://192.168.123.24:8440',
         username: '',
         password: '',
       },
       loginStatus: { loggedIn: false, sessionId: '', token: '' },
-      loginToken: '', // 存储完整的 token 供生成使用
-      loginSessionId: '', // 存储完整的 sessionId 供生成使用
+      loginToken: localStorage.getItem('claimToken') || '', // 存储完整的 token 供生成使用
+      loginSessionId: localStorage.getItem('claimSessionId') || '', // 存储完整的 sessionId 供生成使用
       form: {
         total: 100000,
         concurrent: 10,
@@ -2420,6 +2420,9 @@ const ClaimPage = {
         this.loginStatus = { loggedIn: true, sessionId: r.sessionId ? r.sessionId.substring(0, 8) + '...' : '' };
         this.loginToken = r.token || '';
         this.loginSessionId = r.sessionId || '';
+        localStorage.setItem('claimPlatformUrl', this.loginForm.platformUrl);
+        localStorage.setItem('claimToken', this.loginToken);
+        localStorage.setItem('claimSessionId', this.loginSessionId);
       } catch (e) {
         ElementPlus.ElMessage.error('登录失败: ' + (e.message || '未知错误'));
       } finally {
@@ -2500,8 +2503,11 @@ const ClaimPage = {
     },
   },
   mounted() {
+    // 从 localStorage 恢复登录态（切页回来不丢失）
+    if (this.loginToken && this.loginSessionId) {
+      this.loginStatus = { loggedIn: true, sessionId: this.loginSessionId.substring(0, 8) + '...' };
+    }
     this.loadStats();
-    this.checkLoginStatus();
     this.statsTimer = setInterval(this.loadStats, 3000);
     this.lcTimer = setInterval(this.loadLifecycle, 3000);
   },

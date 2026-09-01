@@ -110,6 +110,7 @@ func SetupRouter(h *hub.Hub, cfg *config.Config) *gin.Engine {
 		v1.GET("/claim/export", claimHandler.exportClaim)
 		v1.GET("/claim/counts", claimHandler.countsClaim)
 		v1.POST("/claim/login", claimHandler.loginClaim)
+		v1.GET("/claim/login-status", claimHandler.loginStatus)
 		v1.POST("/claim/lifecycle/start", claimHandler.startLifecycle)
 		v1.GET("/claim/lifecycle/status", claimHandler.statusLifecycle)
 		v1.POST("/claim/lifecycle/cancel", claimHandler.cancelLifecycle)

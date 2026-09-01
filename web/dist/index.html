@@ -96,7 +96,7 @@ html,body,#app{height:100%;font-family:'Microsoft YaHei','PingFang SC',sans-seri
     <div class="logo">
       <span class="dot"></span>
       移动介质安检站模拟测试工具
-      <span class="app-version">V2.9.8</span>
+      <span class="app-version">V2.9.9</span>
     </div>
     <div class="header-right">
       <div class="sasoc-config" @click="showSasocDialog" title="点击修改SASOC服务器地址">
@@ -560,6 +560,7 @@ const StationPage = {
                   <el-dropdown-item command="usb_claim">U盘领取 (CMD104)</el-dropdown-item>
                   <el-dropdown-item command="usb_return">U盘归还 (CMD105)</el-dropdown-item>
                   <el-dropdown-item command="alarm">告警上报 (CMD106)</el-dropdown-item>
+                  <el-dropdown-item command="alarm_all">一键全部告警</el-dropdown-item>
                   <el-dropdown-item command="operation_log">操作日志 (CMD107)</el-dropdown-item>
                   <el-dropdown-item command="trigger_upgrade">升级下发 (CMD108)</el-dropdown-item>
                 </el-dropdown-menu>
@@ -638,7 +639,7 @@ const StationPage = {
         <el-form :model="alarmForm" label-width="100px" size="default">
           <el-form-item label="安检站"><el-input :model-value="alarmTarget" disabled /></el-form-item>
           <el-form-item label="告警类型">
-            <el-select v-model="alarmForm.alarmType" style="width:100%">
+            <el-select v-model="alarmForm.alarmType" style="width:100%" @change="onAlarmTypeChange">
               <el-option v-for="opt in alarmTypeOptions" :key="opt.value"
                 :label="opt.label + ' (' + opt.value + ') [' + opt.level + ']'"
                 :value="opt.value" />
@@ -649,6 +650,15 @@ const StationPage = {
             <el-form-item label="病毒类型"><el-input v-model="alarmForm.virusType" placeholder="如 trojan" /></el-form-item>
             <el-form-item label="文件名"><el-input v-model="alarmForm.fileName" placeholder="如 unknown.exe" /></el-form-item>
             <el-form-item label="文件哈希"><el-input v-model="alarmForm.fileHash" placeholder="如 0000000000000000" /></el-form-item>
+          </template>
+          <template v-if="alarmForm.alarmType.startsWith('SAFE_UDISK_')">
+            <el-form-item label="告警原因">
+              <el-select v-model="alarmForm.reason" style="width:100%">
+                <el-option v-for="r in (alarmReasonMap[alarmForm.alarmType]||[])" :key="r.value" :label="r.label" :value="r.value" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="柜门编号"><el-input-number v-model="alarmForm.doorNo" :min="1" :max="24" :disabled="alarmForm.reason===5||alarmForm.reason===6||alarmForm.reason===29" /></el-form-item>
+            <el-form-item label="U盘SN"><el-input v-model="alarmForm.sn" placeholder="可选" :disabled="alarmForm.reason===5||alarmForm.reason===6" /></el-form-item>
           </template>
         </el-form>
         <template #footer>
@@ -666,7 +676,7 @@ const StationPage = {
               <el-option v-for="opt in opTypeOptions" :key="opt.value" :label="opt.label + ' (' + opt.value + ')'" :value="opt.value" />
             </el-select>
           </el-form-item>
-          <el-form-item label="U盘SN"><el-input v-model="logForm.sn" placeholder="必填" /></el-form-item>
+          <el-form-item label="U盘SN"><el-input v-model="logForm.sn" :placeholder="['copy','quarantineExport'].includes(logForm.operation)?'可选（无SN介质可留空）':'必填'" /></el-form-item>
           <el-form-item label="结果">
             <el-radio-group v-model="logForm.result">
               <el-radio value="success">成功</el-radio>
@@ -741,7 +751,8 @@ const StationPage = {
       // 告警上报弹窗
       alarmVisible: false,
       alarmTarget: '',
-      alarmForm: { alarmType: 'DEVICE_FAULT', virusName: '', virusType: '', fileName: '', fileHash: '' },
+      alarmForm: { alarmType: 'DEVICE_FAULT', sn: '', reason: 1, doorNo: 1, virusName: '', virusType: '', fileName: '', fileHash: '' },
+      alarmAllLoading: false,
       // 操作日志弹窗
       logVisible: false,
       logTarget: '',
@@ -754,14 +765,66 @@ const StationPage = {
         { label: '硬盘异常', value: 'DISK_ABNORMAL', level: '重要' },
         { label: '管控柜故障', value: 'DEVICE_FAULT', level: '重要' },
         { label: '发现病毒', value: 'MALWARE_DETECTED', level: '紧急' },
+        // 安全U盘类（对齐《安检站安全U盘告警协议》）
+        { label: '柜门故障', value: 'SAFE_UDISK_DOOR_FAULT', level: '紧急' },
+        { label: '无可用归还柜位', value: 'SAFE_UDISK_NO_AVAILABLE_RETURN_SLOT', level: '一般' },
+        { label: '非法设备插入', value: 'SAFE_UDISK_ILLEGAL_DEVICE', level: '重要' },
+        { label: 'U盘异常拔出', value: 'SAFE_UDISK_UNEXPECTED_REMOVAL', level: '重要' },
+        { label: '整机故障', value: 'SAFE_UDISK_CABINET_FATAL_FAULT', level: '紧急' },
+        { label: 'U盘格式化失败', value: 'SAFE_UDISK_FORMAT_FAILED', level: '重要' },
+        { label: '业务信息操作失败', value: 'SAFE_UDISK_METADATA_WRITE_FAILED', level: '重要' },
+        { label: 'U盘初始化失败', value: 'SAFE_UDISK_INIT_FAILED', level: '重要' },
+        { label: '柜门关闭超时', value: 'SAFE_UDISK_DOOR_CLOSE_TIMEOUT', level: '重要' },
+        { label: 'U盘使用违规', value: 'SAFE_UDISK_USAGE_VIOLATION', level: '重要' },
       ],
+      // 安全U盘告警原因表（alarmType → 合法 reason 集合）
+      alarmReasonMap: {
+        'SAFE_UDISK_DOOR_FAULT': [
+          { value: 1, label: '1-柜门硬件故障' }, { value: 2, label: '2-柜门打开失败' },
+          { value: 3, label: '3-人工反馈柜门打开失败' }, { value: 4, label: '4-人工反馈柜门关闭失败' },
+        ],
+        'SAFE_UDISK_NO_AVAILABLE_RETURN_SLOT': [
+          { value: 5, label: '5-没有空闲归还柜位' }, { value: 6, label: '6-所有归还柜门打开失败' },
+        ],
+        'SAFE_UDISK_ILLEGAL_DEVICE': [
+          { value: 7, label: '7-插入非法设备' }, { value: 8, label: '8-关门后发现非法设备' },
+          { value: 9, label: '9-归还时发现非法设备' }, { value: 10, label: '10-巡检发现非法设备' },
+        ],
+        'SAFE_UDISK_UNEXPECTED_REMOVAL': [
+          { value: 11, label: '11-非借还流程中U盘异常拔出' },
+        ],
+        'SAFE_UDISK_CABINET_FATAL_FAULT': [
+          { value: 12, label: '12-柜门连续多次打开失败' }, { value: 13, label: '13-U盘操作连续多次失败' },
+        ],
+        'SAFE_UDISK_FORMAT_FAILED': [
+          { value: 14, label: '14-借用前格式化失败' }, { value: 15, label: '15-归还恢复格式化失败' },
+          { value: 16, label: '16-维护初始化格式化失败' }, { value: 17, label: '17-取盘超时恢复格式化失败' },
+          { value: 18, label: '18-非流程放入后格式化失败' },
+        ],
+        'SAFE_UDISK_METADATA_WRITE_FAILED': [
+          { value: 19, label: '19-借用信息写入失败' }, { value: 20, label: '20-写入后读取失败' },
+          { value: 21, label: '21-写入与回读不一致' }, { value: 22, label: '22-防病毒标志写入失败' },
+          { value: 23, label: '23-借用信息清除失败' },
+        ],
+        'SAFE_UDISK_INIT_FAILED': [
+          { value: 24, label: '24-清除借用信息失败' }, { value: 25, label: '25-清除后读取失败' },
+          { value: 26, label: '26-清除后信息仍存在' },
+        ],
+        'SAFE_UDISK_DOOR_CLOSE_TIMEOUT': [
+          { value: 27, label: '27-借用流程柜门关闭超时' }, { value: 28, label: '28-归还流程柜门关闭超时' },
+        ],
+        'SAFE_UDISK_USAGE_VIOLATION': [
+          { value: 29, label: '29-未在借用有效期内使用' },
+        ],
+      },
       // 操作类型选项
       opTypeOptions: [
         { label: '插入U盘', value: 'insert' },
         { label: '拔出U盘', value: 'remove' },
         { label: '查毒', value: 'scan' },
         { label: '杀毒', value: 'kill' },
-        { label: '复制文件', value: 'copy' },
+        { label: '数据摆渡', value: 'copy' },
+        { label: '隔离区导出', value: 'quarantineExport' },
       ]
     };
   },
@@ -976,6 +1039,14 @@ const StationPage = {
         this.alarmTarget = row.sn;
         this.alarmVisible = true;
         return;
+      } else if (cmd === 'alarm_all') {
+        this.alarmAllLoading = true;
+        try {
+          const r = await apiPost(`/station/${sn}/alarm-all`);
+          ElementPlus.ElMessage.success(`已发送 ${r.sent}/${r.total} 条告警`);
+        } catch (e) { ElementPlus.ElMessage.error('发送失败: ' + e.message); }
+        finally { this.alarmAllLoading = false; }
+        return;
       } else if (cmd === 'operation_log') {
         this.logTarget = row.sn;
         this.logVisible = true;
@@ -992,6 +1063,15 @@ const StationPage = {
         ElementPlus.ElMessage.success(`${cmd} 指令已发送`);
       } catch (e) { ElementPlus.ElMessage.error('发送失败: ' + e.message); }
     },
+    onAlarmTypeChange(val) {
+      // 切换为安全U盘告警类型时，自动重置 reason 为该类型第一个合法值
+      if (val && val.startsWith('SAFE_UDISK_')) {
+        const reasons = this.alarmReasonMap[val];
+        if (reasons && reasons.length > 0) {
+          this.alarmForm.reason = reasons[0].value;
+        }
+      }
+    },
     async submitAlarm() {
       const params = { alarmType: this.alarmForm.alarmType };
       if (this.alarmForm.alarmType === 'MALWARE_DETECTED') {
@@ -999,6 +1079,14 @@ const StationPage = {
         params.virusType = this.alarmForm.virusType || 'trojan';
         params.fileName = this.alarmForm.fileName || 'unknown.exe';
         params.fileHash = this.alarmForm.fileHash || '0000000000000000';
+      } else if (this.alarmForm.alarmType.startsWith('SAFE_UDISK_')) {
+        params.reason = this.alarmForm.reason;
+        if (this.alarmForm.reason !== 5 && this.alarmForm.reason !== 6 && this.alarmForm.reason !== 29) {
+          params.doorNo = this.alarmForm.doorNo;
+        }
+        if (this.alarmForm.reason !== 5 && this.alarmForm.reason !== 6) {
+          params.sn = this.alarmForm.sn;
+        }
       }
       try {
         await apiPost(`/stations/${this.alarmTarget}/command`, { command: 'alarm', params });
@@ -1007,7 +1095,7 @@ const StationPage = {
       } catch (e) { ElementPlus.ElMessage.error('发送失败: ' + e.message); }
     },
     async submitOpLog() {
-      if (!this.logForm.sn) { ElementPlus.ElMessage.warning('请输入U盘SN'); return; }
+      if (!this.logForm.sn && !['copy','quarantineExport'].includes(this.logForm.operation)) { ElementPlus.ElMessage.warning('请输入U盘SN'); return; }
       const params = { operation: this.logForm.operation, sn: this.logForm.sn, result: this.logForm.result };
       try {
         await apiPost(`/stations/${this.logTarget}/command`, { command: 'operation_log', params });
@@ -1988,13 +2076,65 @@ const PressurePage = {
         { label: '硬盘异常', value: 'DISK_ABNORMAL', level: '重要' },
         { label: '管控柜故障', value: 'DEVICE_FAULT', level: '重要' },
         { label: '发现病毒', value: 'MALWARE_DETECTED', level: '紧急' },
+        // 安全U盘类（对齐《安检站安全U盘告警协议》）
+        { label: '柜门故障', value: 'SAFE_UDISK_DOOR_FAULT', level: '紧急' },
+        { label: '无可用归还柜位', value: 'SAFE_UDISK_NO_AVAILABLE_RETURN_SLOT', level: '一般' },
+        { label: '非法设备插入', value: 'SAFE_UDISK_ILLEGAL_DEVICE', level: '重要' },
+        { label: 'U盘异常拔出', value: 'SAFE_UDISK_UNEXPECTED_REMOVAL', level: '重要' },
+        { label: '整机故障', value: 'SAFE_UDISK_CABINET_FATAL_FAULT', level: '紧急' },
+        { label: 'U盘格式化失败', value: 'SAFE_UDISK_FORMAT_FAILED', level: '重要' },
+        { label: '业务信息操作失败', value: 'SAFE_UDISK_METADATA_WRITE_FAILED', level: '重要' },
+        { label: 'U盘初始化失败', value: 'SAFE_UDISK_INIT_FAILED', level: '重要' },
+        { label: '柜门关闭超时', value: 'SAFE_UDISK_DOOR_CLOSE_TIMEOUT', level: '重要' },
+        { label: 'U盘使用违规', value: 'SAFE_UDISK_USAGE_VIOLATION', level: '重要' },
       ],
+      // 安全U盘告警原因表（alarmType → 合法 reason 集合）
+      alarmReasonMap: {
+        'SAFE_UDISK_DOOR_FAULT': [
+          { value: 1, label: '1-柜门硬件故障' }, { value: 2, label: '2-柜门打开失败' },
+          { value: 3, label: '3-人工反馈柜门打开失败' }, { value: 4, label: '4-人工反馈柜门关闭失败' },
+        ],
+        'SAFE_UDISK_NO_AVAILABLE_RETURN_SLOT': [
+          { value: 5, label: '5-没有空闲归还柜位' }, { value: 6, label: '6-所有归还柜门打开失败' },
+        ],
+        'SAFE_UDISK_ILLEGAL_DEVICE': [
+          { value: 7, label: '7-插入非法设备' }, { value: 8, label: '8-关门后发现非法设备' },
+          { value: 9, label: '9-归还时发现非法设备' }, { value: 10, label: '10-巡检发现非法设备' },
+        ],
+        'SAFE_UDISK_UNEXPECTED_REMOVAL': [
+          { value: 11, label: '11-非借还流程中U盘异常拔出' },
+        ],
+        'SAFE_UDISK_CABINET_FATAL_FAULT': [
+          { value: 12, label: '12-柜门连续多次打开失败' }, { value: 13, label: '13-U盘操作连续多次失败' },
+        ],
+        'SAFE_UDISK_FORMAT_FAILED': [
+          { value: 14, label: '14-借用前格式化失败' }, { value: 15, label: '15-归还恢复格式化失败' },
+          { value: 16, label: '16-维护初始化格式化失败' }, { value: 17, label: '17-取盘超时恢复格式化失败' },
+          { value: 18, label: '18-非流程放入后格式化失败' },
+        ],
+        'SAFE_UDISK_METADATA_WRITE_FAILED': [
+          { value: 19, label: '19-借用信息写入失败' }, { value: 20, label: '20-写入后读取失败' },
+          { value: 21, label: '21-写入与回读不一致' }, { value: 22, label: '22-防病毒标志写入失败' },
+          { value: 23, label: '23-借用信息清除失败' },
+        ],
+        'SAFE_UDISK_INIT_FAILED': [
+          { value: 24, label: '24-清除借用信息失败' }, { value: 25, label: '25-清除后读取失败' },
+          { value: 26, label: '26-清除后信息仍存在' },
+        ],
+        'SAFE_UDISK_DOOR_CLOSE_TIMEOUT': [
+          { value: 27, label: '27-借用流程柜门关闭超时' }, { value: 28, label: '28-归还流程柜门关闭超时' },
+        ],
+        'SAFE_UDISK_USAGE_VIOLATION': [
+          { value: 29, label: '29-未在借用有效期内使用' },
+        ],
+      },
       logOptions: [
         { label: '插入U盘', value: 'insert' },
         { label: '拔出U盘', value: 'remove' },
         { label: '查毒', value: 'scan' },
         { label: '杀毒', value: 'kill' },
-        { label: '复制文件', value: 'copy' },
+        { label: '数据摆渡', value: 'copy' },
+        { label: '隔离区导出', value: 'quarantineExport' },
       ],
     };
   },
@@ -2152,10 +2292,10 @@ const ClaimPage = {
               <el-row :gutter="12">
                 <el-col :span="8"><el-form-item label="申领人"><el-input v-model="form.applicantName" /></el-form-item></el-col>
                 <el-col :span="8"><el-form-item label="工号"><el-input v-model="form.applicantCode" /></el-form-item></el-col>
-                <el-col :span="8"><el-form-item label="手机号"><el-input v-model="form.phone" /></el-form-item></el-col>
+                <el-col :span="8"><el-form-item label="手机号"><el-input v-model="form.phone" placeholder="11位号码或1-3位前缀" /></el-form-item></el-col>
               </el-row>
               <el-row :gutter="12">
-                <el-col :span="8"><el-form-item label="区域"><el-input v-model="form.factoryIds" placeholder="逗号分隔" /></el-form-item></el-col>
+                <el-col :span="8"><el-form-item label="区域"><el-input v-model="form.factoryIds" placeholder="数字ID逗号分隔，如 3,4,5" /></el-form-item></el-col>
                 <el-col :span="8"><el-form-item label="容量"><el-select v-model="form.capacity" style="width:100%"><el-option label="8G" value="8G" /><el-option label="16G" value="16G" /><el-option label="64G" value="64G" /></el-select></el-form-item></el-col>
                 <el-col :span="8"><el-form-item label="格式"><el-select v-model="form.format" style="width:100%"><el-option label="FAT32" value="FAT32" /><el-option label="exFAT" value="exFAT" /><el-option label="NTFS" value="NTFS" /></el-select></el-form-item></el-col>
               </el-row>

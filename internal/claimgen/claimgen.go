@@ -172,13 +172,24 @@ func buildClaimBody(idx int, cfg *Config) map[string]interface{} {
 	return map[string]interface{}{
 		"applicantName": cfg.ApplicantName,
 		"applicantCode": code,
-		"phone":         fmt.Sprintf("%s%08d", cfg.Phone, idx%100000000),
+		"phone":         buildPhone(cfg.Phone, idx),
 		"startTime":     startTime.Format("2006-01-02 15:04:05"),
 		"endTime":       endTime.Format("2006-01-02 15:04:05"),
 		"factoryIds":    cfg.FactoryIds,
 		"capacity":      cfg.Capacity,
 		"format":        cfg.Format,
 	}
+}
+
+// buildPhone 生成11位手机号：
+// - 前缀（1-3位）：前缀 + 8位序号
+// - 完整11位：保留前3位 + 后8位用序号替换
+// 始终保证11位
+func buildPhone(phone string, idx int) string {
+	if len(phone) == 11 {
+		return phone[:3] + fmt.Sprintf("%08d", idx%100000000)
+	}
+	return fmt.Sprintf("%s%08d", phone, idx%100000000)
 }
 
 func runTask(task *Task, cfg Config, db *sql.DB) {

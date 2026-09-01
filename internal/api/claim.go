@@ -3,11 +3,19 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/usb-simulator/internal/claimgen"
 	"github.com/usb-simulator/internal/hub"
+)
+
+var (
+	factoryIdsRe = regexp.MustCompile(`^\d+(,\d+)*$`)
+	fullPhoneRe  = regexp.MustCompile(`^1\d{10}$`)
+	phonePreRe   = regexp.MustCompile(`^\d{1,3}$`)
+	workerNoRe   = regexp.MustCompile(`^[A-Za-z0-9]+$`)
 )
 
 type claimHandler struct {
@@ -37,6 +45,10 @@ func (ch *claimHandler) startClaim(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		responseError(c, http.StatusBadRequest, "invalid request: "+err.Error())
+		return
+	}
+	if err := validateClaimParams(req.FactoryIds, req.Phone, req.ApplicantCode); err != nil {
+		responseError(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	task, err := claimgen.StartTask(claimgen.Config{
@@ -196,4 +208,26 @@ func (ch *claimHandler) statusLifecycle(c *gin.Context) {
 func (ch *claimHandler) cancelLifecycle(c *gin.Context) {
 	claimgen.CancelLifecycle()
 	responseSuccess(c, gin.H{"message": "OK"})
+}
+
+// validateClaimParams 发送前校验，避免无效输入导致平台逐条拒绝
+func validateClaimParams(factoryIds, phone, workerNo string) error {
+	// 归一化：中文逗号 → 英文逗号，去空格
+	fids := regexp.MustCompile(`\s+`).ReplaceAllString(factoryIds, "")
+	fids = regexp.MustCompile(`，`).ReplaceAllString(fids, ",")
+
+	if fids != "" && !factoryIdsRe.MatchString(fids) {
+		return fmt.Errorf("区域必须填写数字区域ID（逗号分隔，如 3,4,5），不能填写区域名称；请在平台“U盘申领-区域”中查看对应ID")
+	}
+
+	if phone != "" {
+		if !fullPhoneRe.MatchString(phone) && !phonePreRe.MatchString(phone) {
+			return fmt.Errorf("手机号必须为11位完整号码（1开头）或1-3位前缀（如 138），当前输入：%s", phone)
+		}
+	}
+
+	if workerNo != "" && !workerNoRe.MatchString(workerNo) {
+		return fmt.Errorf("工号只能包含字母和数字，当前输入：%s", workerNo)
+	}
+	return nil
 }

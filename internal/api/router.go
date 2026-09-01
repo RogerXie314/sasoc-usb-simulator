@@ -54,6 +54,7 @@ func SetupRouter(h *hub.Hub, cfg *config.Config) *gin.Engine {
 			station.POST("/:id/claim-usb", stationHandler.claimUsb)
 			station.POST("/:id/return-usb", stationHandler.returnUsb)
 			station.POST("/:id/alarm", stationHandler.alarm)
+			station.POST("/:id/alarm-all", stationHandler.alarmAll)
 			station.POST("/:id/operation-log", stationHandler.operationLog)
 			station.POST("/:id/trigger-upgrade", stationHandler.triggerUpgrade)
 			station.PUT("/:id/config", stationHandler.updateConfig)

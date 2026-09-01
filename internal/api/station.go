@@ -415,6 +415,8 @@ func (sh *stationHandler) alarm(c *gin.Context) {
 	var req struct {
 		AlarmType string `json:"alarmType"`
 		SN        string `json:"sn"`
+		Reason    *int   `json:"reason"`
+		DoorNo    *int   `json:"doorNo"`
 		VirusName string `json:"virusName"`
 		VirusType string `json:"virusType"`
 		FileName  string `json:"fileName"`
@@ -434,6 +436,22 @@ func (sh *stationHandler) alarm(c *gin.Context) {
 		"sn":        req.SN,
 	}
 
+	// 新版安全U盘告警需要 reason 和 doorNo
+	if commands.IsSafeUdiskAlarm(req.AlarmType) {
+		if req.Reason == nil {
+			responseError(c, http.StatusBadRequest, "reason is required for SAFE_UDISK alarm")
+			return
+		}
+		if !commands.IsValidReasonForType(req.AlarmType, *req.Reason) {
+			responseError(c, http.StatusBadRequest, fmt.Sprintf("reason %d is not valid for alarmType %s", *req.Reason, req.AlarmType))
+			return
+		}
+		params["reason"] = *req.Reason
+		if req.DoorNo != nil {
+			params["doorNo"] = *req.DoorNo
+		}
+	}
+
 	// 病毒检测告警需要 detail 字段
 	if req.AlarmType == commands.AlarmTypeMalwareDetected {
 		params["virusName"] = req.VirusName
@@ -449,6 +467,50 @@ func (sh *stationHandler) alarm(c *gin.Context) {
 
 	sh.hub.NotifyMessageSent(station.ID, protocol.CmdAlarm, "alarm", 0)
 	responseSuccess(c, gin.H{"stationId": station.ID, "message": "alarm sent"})
+}
+
+// alarmAll POST /api/v1/station/:id/alarm-all
+// 一键模拟全部告警：覆盖全部10种安全U盘告警类型，每种类型发送一条典型 reason 的告警
+func (sh *stationHandler) alarmAll(c *gin.Context) {
+	id := c.Param("id")
+	station, exists := sh.hub.GetStation(id)
+	if !exists {
+		// 兜底：按 SN 查找（前端按 row.sn 调用）
+		station, exists = sh.hub.GetStationBySN(id)
+	}
+	if !exists {
+		responseError(c, http.StatusNotFound, "station "+id+" not found")
+		return
+	}
+
+	if !station.IsOnline() {
+		responseError(c, http.StatusConflict, "station is not online")
+		return
+	}
+
+	samples := commands.AllSafeUdiskAlarmSamples()
+	sent := 0
+	var failedTypes []string
+	for _, params := range samples {
+		if err := commands.SendCommand(station, protocol.CmdAlarm, params); err != nil {
+			if t, ok := params["alarmType"].(string); ok {
+				failedTypes = append(failedTypes, t)
+			}
+			continue
+		}
+		sent++
+		sh.hub.NotifyMessageSent(station.ID, protocol.CmdAlarm, "alarm", 0)
+		// 每条之间短暂间隔，避免平台侧处理不过来
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	responseSuccess(c, gin.H{
+		"stationId":   station.ID,
+		"sent":        sent,
+		"total":       len(samples),
+		"failedTypes": failedTypes,
+		"message":     fmt.Sprintf("sent %d/%d alarms", sent, len(samples)),
+	})
 }
 
 // operationLog POST /api/v1/station/:id/operation-log
@@ -474,12 +536,17 @@ func (sh *stationHandler) operationLog(c *gin.Context) {
 		responseError(c, http.StatusBadRequest, "invalid request: "+err.Error())
 		return
 	}
-	if req.SN == "" {
-		responseError(c, http.StatusBadRequest, "sn is required")
-		return
-	}
 	if req.Operation == "" {
 		req.Operation = commands.OpInsert
+	}
+	if !commands.IsValidOperation(req.Operation) {
+		responseError(c, http.StatusBadRequest, "invalid operation: "+req.Operation)
+		return
+	}
+	// sn 为条件字段：数据摆渡、隔离区导出等无SN介质操作不要求
+	if req.SN == "" && req.Operation != commands.OpCopy && req.Operation != commands.OpQuarantineExport {
+		responseError(c, http.StatusBadRequest, "sn is required for operation "+req.Operation)
+		return
 	}
 	if req.Result == "" {
 		req.Result = "success"

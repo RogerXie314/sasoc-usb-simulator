@@ -247,6 +247,20 @@ func (ph *pressureHandler) runPressure(stations []*simulator.SimStation, cfg Pre
 							params["fileName"] = randomFileName()
 							params["fileHash"] = randomFileHash()
 						}
+						// 安全U盘告警需要合法 reason 与 doorNo，并按携带规则处理
+						if reasons, ok := commands.AlarmTypeReasons[alarmType]; ok {
+							reason := reasons[rand.Intn(len(reasons))]
+							params["reason"] = reason
+							switch reason {
+							case 5, 6: // 无可用归还柜位：doorNo="", sn=""
+								params["sn"] = ""
+								params["doorNo"] = ""
+							case 29: // 使用违规：doorNo=""
+								params["doorNo"] = ""
+							default:
+								params["doorNo"] = rand.Intn(24) + 1
+							}
+						}
 						if err := commands.SendCommand(s, protocol.CmdAlarm, params); err != nil {
 							mgr.errors.Add(1)
 						} else {
@@ -260,8 +274,15 @@ func (ph *pressureHandler) runPressure(stations []*simulator.SimStation, cfg Pre
 					for _, opType := range cfg.LogTypes {
 						params := map[string]interface{}{
 							"operation": opType,
-							"sn":        randomUsbSN(),
 							"result":    randomOpResult(),
+						}
+						// 数据摆渡、隔离区导出为无SN介质操作，省略 sn 字段
+						if opType != commands.OpCopy && opType != commands.OpQuarantineExport {
+							params["sn"] = randomUsbSN()
+							// insert/remove 结果固定 success
+							if opType == commands.OpInsert || opType == commands.OpRemove {
+								params["result"] = "success"
+							}
 						}
 						if err := commands.SendCommand(s, protocol.CmdOperationLog, params); err != nil {
 							mgr.errors.Add(1)

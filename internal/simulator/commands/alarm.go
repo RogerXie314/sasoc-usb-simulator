@@ -28,6 +28,47 @@ func resourceUsageValue(params map[string]interface{}, key string) float64 {
 	return math.Round(val*100) / 100
 }
 
+// resourceCabinetName 从 params 获取管控柜名称，未提供时随机生成
+var cabinetNames = []string{"A柜", "B柜", "C柜", "D柜", "E柜"}
+
+func resourceCabinetName(params map[string]interface{}) string {
+	if v, ok := params["cabinetName"].(string); ok && v != "" {
+		return v
+	}
+	return cabinetNames[rand.Intn(len(cabinetNames))]
+}
+
+// resourceDoorNo 从 params 获取柜门号，未提供时随机生成 1~24
+func resourceDoorNo(params map[string]interface{}) int {
+	if v, ok := params["doorNo"].(int); ok && v > 0 {
+		return v
+	}
+	if v, ok := params["doorNo"].(float64); ok && v > 0 {
+		return int(v)
+	}
+	return rand.Intn(24) + 1
+}
+
+// resourceDeviceFaultReason 从 params 获取设备故障原因，未提供时随机生成
+var deviceFaultReasons = []string{"柜门打不开", "柜门无法关闭", "管控柜通信中断", "柜门感应器故障", "锁具异常"}
+
+func resourceDeviceFaultReason(params map[string]interface{}) string {
+	if v, ok := params["reason"].(string); ok && v != "" {
+		return v
+	}
+	return deviceFaultReasons[rand.Intn(len(deviceFaultReasons))]
+}
+
+// resourceIllegalAccessReason 从 params 获取非法接入原因，未提供时随机生成
+var illegalAccessReasons = []string{"非所属电站安全U盘", "未收录安全U盘", "已报废安全U盘", "未授权人员携带U盘", "U盘状态异常"}
+
+func resourceIllegalAccessReason(params map[string]interface{}) string {
+	if v, ok := params["reason"].(string); ok && v != "" {
+		return v
+	}
+	return illegalAccessReasons[rand.Intn(len(illegalAccessReasons))]
+}
+
 // AlarmCommand CMDID=106 告警上报
 type AlarmCommand struct{}
 
@@ -199,15 +240,31 @@ func (c *AlarmCommand) BuildBody(station *simulator.SimStation, params map[strin
 		body["detail"] = map[string]interface{}{"diskUsage": resourceUsageValue(params, "diskUsage")}
 	}
 
-	// 病毒告警特有字段（MALWARE_DETECTED 时必填 detail）
+	// 设备故障：携带 detail{cabinetName, doorNo, reason}，对齐服务端 buildDeviceFaultDetail
+	if alarmType == AlarmTypeDeviceFault {
+		body["detail"] = map[string]interface{}{
+			"cabinetName": resourceCabinetName(params),
+			"doorNo":      resourceDoorNo(params),
+			"reason":      resourceDeviceFaultReason(params),
+		}
+	}
+
+	// 非法接入：携带 detail{reason}，对齐服务端 ALARM_TYPE_ILLEGAL_ACCESS 分支
+	if alarmType == AlarmTypeUSBIllegalAccess {
+		body["detail"] = map[string]interface{}{
+			"reason": resourceIllegalAccessReason(params),
+		}
+	}
+
+	// 病毒告警：携带 detail{virusName, virusType, fileName, hash}，对齐服务端 firstText("hash", "sha256", "md5")
 	if alarmType == AlarmTypeMalwareDetected {
-		detail := map[string]interface{}{
+		body["detail"] = map[string]interface{}{
 			"virusName": params["virusName"],
 			"virusType": params["virusType"],
 			"fileName":  params["fileName"],
-			"fileHash":  params["fileHash"],
+			"hash":      params["fileHash"],
+			"fileHash":  params["fileHash"], // 兼容保留
 		}
-		body["detail"] = detail
 	} else if detailVal, ok := params["detail"]; ok && detailVal != nil {
 		body["detail"] = detailVal
 	}

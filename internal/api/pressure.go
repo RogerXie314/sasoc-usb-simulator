@@ -266,6 +266,7 @@ func (ph *pressureHandler) runPressure(stations []*simulator.SimStation, cfg Pre
 							params["virusType"] = randomVirusType()
 							params["fileName"] = randomFileName()
 							params["fileHash"] = randomFileHash()
+							params["hash"] = params["fileHash"] // 对齐服务端 firstText("hash","sha256","md5")
 						}
 						// 安全U盘告警需要合法 reason 与 doorNo，并按携带规则处理
 						if reasons, ok := commands.AlarmTypeReasons[alarmType]; ok {

@@ -2,11 +2,26 @@ package commands
 
 import (
 	"fmt"
+	"math/rand"
 	"time"
 
 	"github.com/usb-simulator/internal/protocol"
 	"github.com/usb-simulator/internal/simulator"
 )
+
+// resourceUsageValue 从 params 中获取使用率值，未提供时随机生成 90.00~99.99 的超阈值值
+func resourceUsageValue(params map[string]interface{}, key string) float64 {
+	if v, ok := params[key]; ok {
+		switch val := v.(type) {
+		case float64:
+			return val
+		case int:
+			return float64(val)
+		}
+	}
+	// 阈值为 90%，生成 90.00~99.99
+	return 90 + rand.Float64()*9.99
+}
 
 // AlarmCommand CMDID=106 告警上报
 type AlarmCommand struct{}
@@ -25,50 +40,50 @@ const (
 
 // ===== 新版安全U盘告警类型（对齐《安检站安全U盘告警协议》） =====
 const (
-	AlarmTypeDoorFault             = "SAFE_UDISK_DOOR_FAULT"               // 柜门故障（紧急）
-	AlarmTypeNoReturnSlot          = "SAFE_UDISK_NO_AVAILABLE_RETURN_SLOT" // 当前无可用归还柜位（一般）
-	AlarmTypeIllegalDevice         = "SAFE_UDISK_ILLEGAL_DEVICE"           // 非法设备插入（重要）
-	AlarmTypeUnexpectedRemoval     = "SAFE_UDISK_UNEXPECTED_REMOVAL"       // U盘异常拔出（重要）
-	AlarmTypeCabinetFatalFault     = "SAFE_UDISK_CABINET_FATAL_FAULT"      // 整机故障（紧急）
-	AlarmTypeFormatFailed          = "SAFE_UDISK_FORMAT_FAILED"            // U盘格式化失败（重要）
-	AlarmTypeMetadataWriteFailed   = "SAFE_UDISK_METADATA_WRITE_FAILED"    // U盘业务信息操作失败（重要）
-	AlarmTypeInitFailed            = "SAFE_UDISK_INIT_FAILED"              // U盘初始化失败（重要）
-	AlarmTypeDoorCloseTimeout      = "SAFE_UDISK_DOOR_CLOSE_TIMEOUT"       // 柜门关闭超时（重要）
-	AlarmTypeUsageViolation        = "SAFE_UDISK_USAGE_VIOLATION"          // 安全U盘使用违规（重要）
+	AlarmTypeDoorFault           = "SAFE_UDISK_DOOR_FAULT"               // 柜门故障（紧急）
+	AlarmTypeNoReturnSlot        = "SAFE_UDISK_NO_AVAILABLE_RETURN_SLOT" // 当前无可用归还柜位（一般）
+	AlarmTypeIllegalDevice       = "SAFE_UDISK_ILLEGAL_DEVICE"           // 非法设备插入（重要）
+	AlarmTypeUnexpectedRemoval   = "SAFE_UDISK_UNEXPECTED_REMOVAL"       // U盘异常拔出（重要）
+	AlarmTypeCabinetFatalFault   = "SAFE_UDISK_CABINET_FATAL_FAULT"      // 整机故障（紧急）
+	AlarmTypeFormatFailed        = "SAFE_UDISK_FORMAT_FAILED"            // U盘格式化失败（重要）
+	AlarmTypeMetadataWriteFailed = "SAFE_UDISK_METADATA_WRITE_FAILED"    // U盘业务信息操作失败（重要）
+	AlarmTypeInitFailed          = "SAFE_UDISK_INIT_FAILED"              // U盘初始化失败（重要）
+	AlarmTypeDoorCloseTimeout    = "SAFE_UDISK_DOOR_CLOSE_TIMEOUT"       // 柜门关闭超时（重要）
+	AlarmTypeUsageViolation      = "SAFE_UDISK_USAGE_VIOLATION"          // 安全U盘使用违规（重要）
 )
 
 // ===== 告警原因枚举（reason 0~29，对齐协议 §1.5） =====
 const (
-	ReasonUnknown                            = 0  // 未知原因（保留值）
-	ReasonDoorHardwareFault                  = 1  // 柜门硬件故障
-	ReasonDoorOpenFailed                     = 2  // 柜门打开失败
-	ReasonUserReportedDoorOpenFailed         = 3  // 人工反馈柜门打开失败
-	ReasonUserReportedDoorCloseFailed        = 4  // 人工反馈柜门关闭失败
-	ReasonNoEmptyReturnSlot                  = 5  // 没有空闲归还柜位
-	ReasonAllReturnDoorsOpenFailed           = 6  // 所有归还柜门打开失败
-	ReasonIllegalDeviceInserted              = 7  // 插入非法设备
-	ReasonIllegalDeviceFoundAfterDoorClosed  = 8  // 关闭柜门后发现非法设备
-	ReasonIllegalDeviceFoundDuringReturn     = 9  // 归还过程中发现非法设备
-	ReasonIllegalDeviceFoundDuringInventory  = 10 // 柜位巡检时发现非法设备
-	ReasonUdiskRemovedWithoutActiveFlow      = 11 // 非借还流程中U盘异常拔出
-	ReasonDoorOpenFailedRepeatedly           = 12 // 柜门连续多次打开失败，整机进入故障状态
-	ReasonUdiskOperationFailedRepeatedly     = 13 // U盘操作连续多次失败，整机进入故障状态
-	ReasonBorrowFormatFailed                 = 14 // 借用前格式化失败
-	ReasonReturnRecoveryFormatFailed         = 15 // 归还后恢复U盘时格式化失败
-	ReasonMaintenanceFormatFailed            = 16 // 维护初始化时格式化失败
-	ReasonBorrowTimeoutRecoveryFormatFailed  = 17 // 借用取盘超时后恢复U盘时格式化失败
-	ReasonNonflowRecoveryFormatFailed        = 18 // 非流程放入U盘后恢复格式化失败
-	ReasonBorrowInfoWriteFailed              = 19 // 借用信息写入失败
-	ReasonBorrowInfoVerifyReadFailed         = 20 // 写入后读取借用信息失败
-	ReasonBorrowInfoVerifyMismatch           = 21 // 借用信息写入与回读内容不一致
-	ReasonAntivirusFlagWriteFailed           = 22 // 防病毒标志写入失败
-	ReasonBorrowInfoClearFailed              = 23 // 借用信息清除失败
-	ReasonInitClearBorrowInfoFailed          = 24 // 初始化时清除借用信息失败
-	ReasonInitClearVerifyReadFailed          = 25 // 初始化清除后读取借用信息失败
-	ReasonInitClearVerifyMismatch            = 26 // 初始化清除后借用信息仍然存在
-	ReasonBorrowDoorCloseTimeout             = 27 // 借用流程柜门关闭超时
-	ReasonReturnDoorCloseTimeout             = 28 // 归还流程柜门关闭超时
-	ReasonUdiskUsedOutsideBorrowPeriod       = 29 // 未在借用有效期内使用安全U盘
+	ReasonUnknown                           = 0  // 未知原因（保留值）
+	ReasonDoorHardwareFault                 = 1  // 柜门硬件故障
+	ReasonDoorOpenFailed                    = 2  // 柜门打开失败
+	ReasonUserReportedDoorOpenFailed        = 3  // 人工反馈柜门打开失败
+	ReasonUserReportedDoorCloseFailed       = 4  // 人工反馈柜门关闭失败
+	ReasonNoEmptyReturnSlot                 = 5  // 没有空闲归还柜位
+	ReasonAllReturnDoorsOpenFailed          = 6  // 所有归还柜门打开失败
+	ReasonIllegalDeviceInserted             = 7  // 插入非法设备
+	ReasonIllegalDeviceFoundAfterDoorClosed = 8  // 关闭柜门后发现非法设备
+	ReasonIllegalDeviceFoundDuringReturn    = 9  // 归还过程中发现非法设备
+	ReasonIllegalDeviceFoundDuringInventory = 10 // 柜位巡检时发现非法设备
+	ReasonUdiskRemovedWithoutActiveFlow     = 11 // 非借还流程中U盘异常拔出
+	ReasonDoorOpenFailedRepeatedly          = 12 // 柜门连续多次打开失败，整机进入故障状态
+	ReasonUdiskOperationFailedRepeatedly    = 13 // U盘操作连续多次失败，整机进入故障状态
+	ReasonBorrowFormatFailed                = 14 // 借用前格式化失败
+	ReasonReturnRecoveryFormatFailed        = 15 // 归还后恢复U盘时格式化失败
+	ReasonMaintenanceFormatFailed           = 16 // 维护初始化时格式化失败
+	ReasonBorrowTimeoutRecoveryFormatFailed = 17 // 借用取盘超时后恢复U盘时格式化失败
+	ReasonNonflowRecoveryFormatFailed       = 18 // 非流程放入U盘后恢复格式化失败
+	ReasonBorrowInfoWriteFailed             = 19 // 借用信息写入失败
+	ReasonBorrowInfoVerifyReadFailed        = 20 // 写入后读取借用信息失败
+	ReasonBorrowInfoVerifyMismatch          = 21 // 借用信息写入与回读内容不一致
+	ReasonAntivirusFlagWriteFailed          = 22 // 防病毒标志写入失败
+	ReasonBorrowInfoClearFailed             = 23 // 借用信息清除失败
+	ReasonInitClearBorrowInfoFailed         = 24 // 初始化时清除借用信息失败
+	ReasonInitClearVerifyReadFailed         = 25 // 初始化清除后读取借用信息失败
+	ReasonInitClearVerifyMismatch           = 26 // 初始化清除后借用信息仍然存在
+	ReasonBorrowDoorCloseTimeout            = 27 // 借用流程柜门关闭超时
+	ReasonReturnDoorCloseTimeout            = 28 // 归还流程柜门关闭超时
+	ReasonUdiskUsedOutsideBorrowPeriod      = 29 // 未在借用有效期内使用安全U盘
 )
 
 // ReasonNames 告警原因中文名映射
@@ -166,6 +181,17 @@ func (c *AlarmCommand) BuildBody(station *simulator.SimStation, params map[strin
 		}
 		body["detail"] = detail
 		return body, nil
+	}
+
+	// 资源类告警：携带 detail{cpuUsage/memoryUsage/diskUsage}，对齐服务端 UsbStationProtocolSupport.formatUsageDetail
+	// 真实设备在资源使用率超过阈值(90%)时上报告警，detail 中携带当前使用率
+	switch alarmType {
+	case AlarmTypeCPUAbnormal:
+		body["detail"] = map[string]interface{}{"cpuUsage": resourceUsageValue(params, "cpuUsage")}
+	case AlarmTypeMemoryAbnormal:
+		body["detail"] = map[string]interface{}{"memoryUsage": resourceUsageValue(params, "memoryUsage")}
+	case AlarmTypeDiskAbnormal:
+		body["detail"] = map[string]interface{}{"diskUsage": resourceUsageValue(params, "diskUsage")}
 	}
 
 	// 病毒告警特有字段（MALWARE_DETECTED 时必填 detail）

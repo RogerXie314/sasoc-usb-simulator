@@ -2,6 +2,7 @@ package commands
 
 import (
 	"fmt"
+	"math"
 	"math/rand"
 	"time"
 
@@ -9,18 +10,22 @@ import (
 	"github.com/usb-simulator/internal/simulator"
 )
 
-// resourceUsageValue 从 params 中获取使用率值，未提供时随机生成 90.00~99.99 的超阈值值
+// resourceUsageValue 从 params 中获取使用率值，未提供时随机生成 90.00~99.99 的超阈值值（保留两位小数）
 func resourceUsageValue(params map[string]interface{}, key string) float64 {
+	var val float64
 	if v, ok := params[key]; ok {
-		switch val := v.(type) {
+		switch v := v.(type) {
 		case float64:
-			return val
+			val = v
 		case int:
-			return float64(val)
+			val = float64(v)
 		}
+	} else {
+		// 阈值为 90%，生成 90.00~99.99
+		val = 90 + rand.Float64()*9.99
 	}
-	// 阈值为 90%，生成 90.00~99.99
-	return 90 + rand.Float64()*9.99
+	// 保留两位小数，避免服务端透传后显示冗长精度
+	return math.Round(val*100) / 100
 }
 
 // AlarmCommand CMDID=106 告警上报

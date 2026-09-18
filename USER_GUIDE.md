@@ -158,7 +158,7 @@ pressure:
 
 用于向 SASOC 平台批量写入审计记录，支撑 **U盘审计（wl_usb_audit_log）与安检站策略审计（wl_usb_strategy_audit）各 100 万条容量规格**的验证。
 
-支持两种生成模式：
+支持两种生成模式，**两种模式可同时运行**（互不干扰，各自独立统计、独立停止）：
 
 #### 2.7.1 本地模式（默认，CMDID107 操作日志，审计类型 8/9/12/13）
 
@@ -193,7 +193,7 @@ pressure:
 前提与步骤：
 
 1. **在测试平台提前录入并收录至少 1 个测试 U 盘**（建议 5 个左右），记下各 SN
-2. 确认能访问测试平台的 openGauss：地址、端口（默认 5432）、库名（默认 `sasoc`）、schema（默认 `soc`）、用户名、密码
+2. 确认能访问测试平台的 openGauss：地址、端口（默认 5432）、库名（默认 `wnt`）、schema（默认 `soc`）、用户名、密码
 3. 「审计数据生成」页生成方式选择「平台数据模式」：
    - 填写 **openGauss 连接**信息（只允许指向独立测试实例）
    - **SN 列表**：每行一个已收录 U 盘 SN；留空则自动从平台查询已收录 U 盘
@@ -314,9 +314,9 @@ pressure:
 
 | 方法 | 路径 | 说明 |
 |:-----|:-----|:-----|
-| POST | `/auditgen/start` | 启动审计数据生成任务 |
-| POST | `/auditgen/stop` | 停止生成任务 |
-| GET | `/auditgen/stats` | 获取生成统计（轮询使用） |
+| POST | `/auditgen/start` | 启动审计数据生成任务（`mode` 为 `local`/`platform`，按模式区分任务槽位） |
+| POST | `/auditgen/stop` | 停止生成任务。请求体可选 `{"mode":"local"}`；**不传 mode 时停止全部** |
+| GET | `/auditgen/stats` | 获取生成统计（轮询使用）。返回 `{"code":0,"data":{"local":{...},"platform":{...}}}`，两模式各自独立 |
 
 **启动生成请求体（本地模式）**：
 
@@ -351,7 +351,7 @@ pressure:
   "stationCount": 0,
   "openGaussHost": "192.168.123.124",
   "openGaussPort": 5432,
-  "openGaussDB": "sasoc",
+  "openGaussDB": "wnt",
   "openGaussSchema": "soc",
   "openGaussUser": "soc",
   "openGaussPassword": "******",
@@ -362,15 +362,17 @@ pressure:
 | 字段 | 说明 |
 |:-----|:-----|
 | `openGaussHost` / `openGaussPort` | 测试平台数据库地址/端口（端口默认 5432） |
-| `openGaussDB` / `openGaussSchema` | 库名（默认 `sasoc`）/ schema（默认 `soc`） |
+| `openGaussDB` / `openGaussSchema` | 库名（默认 `wnt`）/ schema（默认 `soc`） |
 | `openGaussUser` / `openGaussPassword` | 数据库账号密码 |
 | `deviceSNs` | 已收录 U 盘 SN 列表；空数组则自动查询平台已收录设备 |
 | `total`（平台模式） | 完整周期数（每个周期=申领-领取-归还，平台侧类型4+5 各 +1，策略审计 +3） |
 
-**响应/统计字段**：`total/sent/errors/rate/remainingS/elapsed/startTime/endTime/running/mode/claimSent/returnSent`。
+**响应/统计字段**（每个模式各一份）：`total/sent/errors/rate/remainingS/elapsed/startTime/endTime/running/mode/claimSent/returnSent`。
 平台模式下 `sent` = 完成周期数，`claimSent`/`returnSent` = 已发 CMDID104/105 数。
 
-> 生成任务达到 `total` 后自动停止；运行中重复启动返回 HTTP 409。
+> **双模式并发**：`local` 与 `platform` 是两个独立任务槽位，**可同时运行**；各自的启动/停止/统计互不影响。
+> 某一模式运行中重复启动**同模式**返回 HTTP 409；启动**另一模式**正常返回，两任务并行推进。
+> 生成任务达到 `total` 后自动停止。
 > 指向生产平台（192.168.60.162）启动时返回 HTTP 400。
 > 平台数据模式要求预置已收录 U 盘并正确配置 openGauss；连接失败或未找到设备时任务自动结束并计入错误。
 
@@ -568,6 +570,14 @@ pressure:
 1. 使用独立测试实例：配置平台数据模式、目标条数=1000000（平台侧类型4+5 各 100 万 + 策略审计 300 万）
 2. 速率建议从 100~200 起步，观察平台处理与 openGauss 入库无积压后逐步调高
 3. 生成完成后到平台侧确认 `wl_usb_audit_log` 中类型 4/5 各自达到目标量级
+
+#### 场景 A-006：双模式并发运行（本地 + 平台同时生成）
+
+1. 准备：启动至少 1 个模拟安检站；平台录入并收录测试 U 盘（供平台模式使用）
+2. 左侧「本地模式」配置目标条数=100000，点击「开始生成」
+3. 右侧「平台模式」配置 openGauss 连接与 SN 列表、目标条数=100000，点击「开始生成」（此时左侧仍在运行，两任务并行）
+4. 确认两栏统计各自独立显示进度、速率、错误；任一栏「停止」只停止对应模式，另一模式继续
+5. 同模式运行中再次点击「开始生成」会被拒绝（HTTP 409），另一模式不受影响
 
 ---
 

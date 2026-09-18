@@ -2229,7 +2229,8 @@ const PressurePage = {
 
 // ============================================================
 // 审计数据生成页：批量生成 U盘审计 + 安检站策略审计（各 100 万）
-// 通过 CMDID107 操作日志上报，平台侧 wl_usb_audit_log / wl_usb_strategy_audit 各 +1
+// 双模式并发：本地模式（CMDID107 类型8/9/12/13）与平台数据模式（103/104/105 类型4/5）
+// 各自独立运行/统计/停止，互不冲突
 // ============================================================
 const AuditGenPage = {
   template: `
@@ -2244,205 +2245,214 @@ const AuditGenPage = {
         <template #title>
           目标平台：{{sasocTip || '读取中…'}} — 请确认是<b>独立测试实例</b>。该功能仅用于向测试平台批量写入
           U盘审计（wl_usb_audit_log）与安检站策略审计（wl_usb_strategy_audit）数据，
-          禁止指向生产平台（192.168.60.162）。
+          禁止指向生产平台（192.168.60.162）。两种模式可同时运行。
         </template>
       </el-alert>
 
-      <!-- 统计栏 -->
-      <div class="stat-cards">
-        <div class="stat-card">
-          <div class="stat-label">目标总条数</div>
-          <div class="stat-value">{{formatNum(stats.total)||0}}</div>
-          <el-icon class="stat-icon"><Memo /></el-icon>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">已发送</div>
-          <div class="stat-value success">{{formatNum(stats.sent)||0}}</div>
-          <el-icon class="stat-icon"><DocumentChecked /></el-icon>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">生成速率</div>
-          <div class="stat-value">{{stats.rate||0}} 条/秒</div>
-          <el-icon class="stat-icon"><TrendCharts /></el-icon>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">发送错误</div>
-          <div class="stat-value" :class="stats.errors>0?'danger':'success'">{{stats.errors||0}}</div>
-          <el-icon class="stat-icon"><CircleClose /></el-icon>
-        </div>
-        <div class="stat-card" v-if="form.mode==='platform'">
-          <div class="stat-label">已领取(类型4)</div>
-          <div class="stat-value">{{formatNum(stats.claimSent)||0}}</div>
-          <el-icon class="stat-icon"><DocumentChecked /></el-icon>
-        </div>
-        <div class="stat-card" v-if="form.mode==='platform'">
-          <div class="stat-label">已归还(类型5)</div>
-          <div class="stat-value">{{formatNum(stats.returnSent)||0}}</div>
-          <el-icon class="stat-icon"><DocumentChecked /></el-icon>
-        </div>
-      </div>
-
-      <!-- 运行状态 -->
-      <el-card v-if="stats.running" style="margin-bottom:20px" body-style="padding:16px 20px">
-        <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
-          <el-tag type="success" effect="dark" size="large">生成中</el-tag>
-          <el-tag v-if="stats.mode==='platform'" effect="plain" size="large">平台数据模式</el-tag>
-          <span style="font-size:14px;color:#606266">开始时间: {{stats.startTime}}</span>
-          <span style="font-size:14px;color:#606266">已发送: {{formatNum(stats.sent)}} / {{formatNum(stats.total)}}</span>
-          <el-progress :percentage="progressPercent" style="width:220px" />
-          <span style="font-size:14px;color:#909399" v-if="stats.remainingS>0">预计剩余 {{stats.remainingS}}s</span>
-          <el-button type="danger" @click="stopGen" style="margin-left:auto">停止生成</el-button>
-        </div>
-      </el-card>
-
-      <!-- 配置区 -->
-      <el-card style="margin-bottom:20px">
-        <template #header><span style="font-weight:600">生成配置</span></template>
-        <el-form :model="form" label-width="130px" size="default">
-          <el-form-item label="在线站点">
-            <span style="color:#909399;font-size:13px">当前在线 {{onlineCount}} 个，将使用前 {{form.stationCount>0?form.stationCount:onlineCount}} 个</span>
-          </el-form-item>
-          <el-form-item label="使用站点数量">
-            <el-input-number v-model="form.stationCount" :min="0" :max="Math.max(onlineCount,1)" style="width:200px" />
-            <span style="margin-left:12px;font-size:12px;color:#909399">0 = 全部在线站点</span>
-          </el-form-item>
-
-          <el-divider content-position="left">生成方式</el-divider>
-
-          <el-form-item label="生成模式">
-            <el-radio-group v-model="form.mode" @change="onModeChange">
-              <el-radio value="local">本地SN池（CMDID107 操作日志，类型 8/9/12/13）</el-radio>
-              <el-radio value="platform">平台数据模式（CMDID103/104/105 申领-领取-归还，类型 4/5）</el-radio>
-            </el-radio-group>
-            <div style="font-size:12px;color:#909399;width:100%">
-              平台模式：工具连接 openGauss 为已收录U盘插入申领记录并模拟安检站完成「申领码验证→U盘领取→U盘归还」，
-              平台侧 wl_usb_audit_log 写入类型 4+5，wl_usb_strategy_audit 写入 3 条。
-            </div>
-          </el-form-item>
-
-          <el-divider content-position="left">数据规模</el-divider>
-
-          <el-form-item label="目标总条数">
-            <el-input-number v-model="form.total" :min="1" :max="5000000" :step="10000" style="width:200px" />
-            <span style="margin-left:12px;font-size:12px;color:#909399">
-              {{form.mode==='platform' ? '一个完整周期（申领-领取-归还）计 1 条，平台侧类型4与类型5各写入 1 条' : '对应平台规格 100 万条（U盘审计+策略审计各写入 N 条）'}}
-            </span>
-          </el-form-item>
-          <el-form-item label="生成速率(条/秒)">
-            <el-input-number v-model="form.rate" :min="1" :max="10000" :step="100" style="width:200px" />
-            <span style="margin-left:12px;font-size:12px;color:#909399">默认 1000，上限 10000；建议按平台处理能力调低</span>
-          </el-form-item>
-
-          <!-- 本地模式配置 -->
-          <template v-if="form.mode==='local'">
-            <el-divider content-position="left">数据内容</el-divider>
-
-            <el-form-item label="操作类型">
-              <el-checkbox-group v-model="form.opTypes">
-                <el-checkbox v-for="opt in opOptions" :key="opt.value" :value="opt.value" :label="opt.value">
-                  {{opt.label}} [auditType {{opt.auditType}}]
-                </el-checkbox>
-              </el-checkbox-group>
-              <div style="font-size:12px;color:#909399;width:100%">平台对每条上报各写一条 U盘审计 + 一条安检站策略审计</div>
-            </el-form-item>
-            <el-form-item label="SN前缀">
-              <el-input v-model="form.snPrefix" style="width:200px" placeholder="USB-" />
-            </el-form-item>
-            <el-form-item label="SN池大小">
-              <el-input-number v-model="form.snPoolSize" :min="1" :max="100000" :step="100" style="width:200px" />
-              <span style="margin-left:12px;font-size:12px;color:#909399">SN 池内循环使用，贴近真实多 U 盘场景</span>
-            </el-form-item>
-          </template>
-
-          <!-- 平台数据模式配置 -->
-          <template v-else>
-            <el-divider content-position="left">openGauss 连接（测试平台数据库）</el-divider>
-
-            <el-form-item label="数据库地址">
-              <el-input v-model="form.gaussHost" style="width:280px" placeholder="192.168.123.124" />
-            </el-form-item>
-            <el-form-item label="端口">
-              <el-input-number v-model="form.gaussPort" :min="1" :max="65535" style="width:200px" />
-            </el-form-item>
-            <el-form-item label="数据库名">
-              <el-input v-model="form.gaussDb" style="width:200px" placeholder="wnt" />
-            </el-form-item>
-            <el-form-item label="Schema">
-              <el-input v-model="form.gaussSchema" style="width:200px" placeholder="soc" />
-            </el-form-item>
-            <el-form-item label="用户名">
-              <el-input v-model="form.gaussUser" style="width:200px" placeholder="soc" autocomplete="off" />
-            </el-form-item>
-            <el-form-item label="密码">
-              <el-input v-model="form.gaussPass" type="password" show-password style="width:200px" autocomplete="new-password" />
-            </el-form-item>
-
-            <el-divider content-position="left">U 盘 SN 来源</el-divider>
-
-            <el-form-item label="SN 列表">
-              <el-input
-                v-model="form.deviceSNs"
-                type="textarea" :rows="4"
-                style="width:100%"
-                placeholder="每行一个 SN，仅使用已收录（status=3）的 U 盘。留空则自动从平台查询已收录 U 盘。"
-              />
-              <div style="font-size:12px;color:#909399;width:100%">
-                建议先手动录入并收录若干个测试 U 盘，再将 SN 填入此处；多个 SN 轮询循环使用。
+      <el-row :gutter="16">
+        <!-- ==================== 左栏：本地模式 ==================== -->
+        <el-col :xs="24" :md="12">
+          <el-card style="margin-bottom:20px">
+            <template #header>
+              <div style="display:flex;align-items:center;justify-content:space-between">
+                <span style="font-weight:600">
+                  <el-tag type="primary" effect="dark" size="small" style="margin-right:8px">本地</el-tag>
+                  本地SN池模式
+                </span>
+                <el-tag :type="localStats.running?'success':'info'" size="small" effect="plain">
+                  {{localStats.running?'生成中':'空闲'}}
+                </el-tag>
               </div>
-            </el-form-item>
-          </template>
+            </template>
 
-          <el-form-item>
-            <el-button type="primary" size="large" @click="startGen" :disabled="stats.running" :loading="starting">
-              <el-icon><VideoPlay /></el-icon>开始生成
-            </el-button>
-            <el-button type="warning" size="large" @click="stopGen" :disabled="!stats.running" style="margin-left:12px">
-              <el-icon><VideoPause /></el-icon>停止生成
-            </el-button>
-          </el-form-item>
-        </el-form>
-      </el-card>
+            <!-- 运行状态 -->
+            <div v-if="localStats.running" style="margin-bottom:16px;padding:12px;background:#f0f9eb;border-radius:6px">
+              <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+                <span style="font-size:13px;color:#606266">已发送 {{formatNum(localStats.sent)}} / {{formatNum(localStats.total)}}</span>
+                <el-progress :percentage="localProgressPercent" style="width:160px" />
+                <span style="font-size:12px;color:#909399" v-if="localStats.remainingS>0">剩余 {{localStats.remainingS}}s</span>
+              </div>
+            </div>
 
-      <!-- 实时统计 -->
-      <el-card v-if="stats.running || stats.sent>0">
-        <template #header><span style="font-weight:600">生成统计</span></template>
-        <el-descriptions :column="3" border>
-          <el-descriptions-item label="状态">
-            <el-tag :type="stats.running?'success':'info'" size="small" effect="dark">{{stats.running?'生成中':'已结束'}}</el-tag>
-          </el-descriptions-item>
-          <el-descriptions-item label="目标总条数">{{formatNum(stats.total)||0}}</el-descriptions-item>
-          <el-descriptions-item label="已发送">
-            <span style="font-size:18px;font-weight:700;color:#409eff">{{formatNum(stats.sent)||0}}</span>
-          </el-descriptions-item>
-          <el-descriptions-item v-if="stats.mode==='platform'" label="已领取(类型4)">{{formatNum(stats.claimSent)||0}}</el-descriptions-item>
-          <el-descriptions-item v-if="stats.mode==='platform'" label="已归还(类型5)">{{formatNum(stats.returnSent)||0}}</el-descriptions-item>
-          <el-descriptions-item label="发送错误">
-            <span style="font-size:18px;font-weight:700" :class="stats.errors>0?'danger-text':''">{{stats.errors||0}}</span>
-          </el-descriptions-item>
-          <el-descriptions-item label="平均速率">{{stats.rate||0}} 条/秒</el-descriptions-item>
-          <el-descriptions-item label="已运行">{{formatElapsed(stats.elapsed)}}</el-descriptions-item>
-          <el-descriptions-item label="预计剩余" v-if="stats.running">{{stats.remainingS>0?(stats.remainingS+'s'):'计算中…'}}</el-descriptions-item>
-          <el-descriptions-item label="开始时间">{{stats.startTime||'-'}}</el-descriptions-item>
-          <el-descriptions-item label="结束时间" v-if="!stats.running && stats.endTime">{{stats.endTime}}</el-descriptions-item>
-        </el-descriptions>
-      </el-card>
+            <el-form :model="localForm" label-width="110px" size="default">
+              <el-form-item label="目标总条数">
+                <el-input-number v-model="localForm.total" :min="1" :max="5000000" :step="10000" style="width:180px" />
+              </el-form-item>
+              <el-form-item label="速率(条/秒)">
+                <el-input-number v-model="localForm.rate" :min="1" :max="10000" :step="100" style="width:180px" />
+                <span style="margin-left:8px;font-size:12px;color:#909399">默认1000，上限10000</span>
+              </el-form-item>
+              <el-form-item label="使用站点数">
+                <el-input-number v-model="localForm.stationCount" :min="0" :max="Math.max(onlineCount,1)" style="width:180px" />
+                <span style="margin-left:8px;font-size:12px;color:#909399">0=全部(在线{{onlineCount}})</span>
+              </el-form-item>
+
+              <el-divider content-position="left">数据内容（CMDID107）</el-divider>
+
+              <el-form-item label="操作类型">
+                <el-checkbox-group v-model="localForm.opTypes">
+                  <el-checkbox v-for="opt in opOptions" :key="opt.value" :value="opt.value" :label="opt.value">
+                    {{opt.label}} [类型{{opt.auditType}}]
+                  </el-checkbox>
+                </el-checkbox-group>
+                <div style="font-size:12px;color:#909399;width:100%">平台对每条上报各写一条 U盘审计 + 一条安检站策略审计</div>
+              </el-form-item>
+              <el-form-item label="SN前缀">
+                <el-input v-model="localForm.snPrefix" style="width:180px" placeholder="USB-" />
+              </el-form-item>
+              <el-form-item label="SN池大小">
+                <el-input-number v-model="localForm.snPoolSize" :min="1" :max="100000" :step="100" style="width:180px" />
+              </el-form-item>
+
+              <el-form-item>
+                <el-button type="primary" @click="startGen('local')" :disabled="localStats.running" :loading="starting==='local'">
+                  <el-icon><VideoPlay /></el-icon>开始生成
+                </el-button>
+                <el-button type="warning" @click="stopGen('local')" :disabled="!localStats.running" style="margin-left:8px">
+                  <el-icon><VideoPause /></el-icon>停止
+                </el-button>
+              </el-form-item>
+            </el-form>
+
+            <!-- 本地统计 -->
+            <el-descriptions v-if="localStats.running || localStats.sent>0" :column="2" border size="small">
+              <el-descriptions-item label="状态">
+                <el-tag :type="localStats.running?'success':'info'" size="small" effect="dark">{{localStats.running?'生成中':'已结束'}}</el-tag>
+              </el-descriptions-item>
+              <el-descriptions-item label="已发送">
+                <b style="color:#409eff">{{formatNum(localStats.sent)||0}}</b> / {{formatNum(localStats.total)||0}}
+              </el-descriptions-item>
+              <el-descriptions-item label="错误"><b :class="localStats.errors>0?'danger-text':''">{{localStats.errors||0}}</b></el-descriptions-item>
+              <el-descriptions-item label="平均速率">{{localStats.rate||0}} 条/秒</el-descriptions-item>
+              <el-descriptions-item label="已运行">{{formatElapsed(localStats.elapsed)}}</el-descriptions-item>
+              <el-descriptions-item label="开始时间" v-if="localStats.startTime">{{localStats.startTime}}</el-descriptions-item>
+              <el-descriptions-item label="结束时间" v-if="!localStats.running && localStats.endTime">{{localStats.endTime}}</el-descriptions-item>
+            </el-descriptions>
+            <el-empty v-else description="本地模式未运行" :image-size="60" />
+          </el-card>
+        </el-col>
+
+        <!-- ==================== 右栏：平台数据模式 ==================== -->
+        <el-col :xs="24" :md="12">
+          <el-card style="margin-bottom:20px">
+            <template #header>
+              <div style="display:flex;align-items:center;justify-content:space-between">
+                <span style="font-weight:600">
+                  <el-tag type="success" effect="dark" size="small" style="margin-right:8px">平台</el-tag>
+                  平台数据模式
+                </span>
+                <el-tag :type="platformStats.running?'success':'info'" size="small" effect="plain">
+                  {{platformStats.running?'生成中':'空闲'}}
+                </el-tag>
+              </div>
+            </template>
+
+            <!-- 运行状态 -->
+            <div v-if="platformStats.running" style="margin-bottom:16px;padding:12px;background:#f0f9eb;border-radius:6px">
+              <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+                <span style="font-size:13px;color:#606266">周期 {{formatNum(platformStats.sent)}} / {{formatNum(platformStats.total)}}</span>
+                <el-progress :percentage="platformProgressPercent" style="width:160px" />
+                <span style="font-size:12px;color:#909399" v-if="platformStats.remainingS>0">剩余 {{platformStats.remainingS}}s</span>
+              </div>
+            </div>
+
+            <el-form :model="platformForm" label-width="110px" size="default">
+              <el-form-item label="目标周期数">
+                <el-input-number v-model="platformForm.total" :min="1" :max="5000000" :step="10000" style="width:180px" />
+                <span style="margin-left:8px;font-size:12px;color:#909399">1周期=申领→领取→归还</span>
+              </el-form-item>
+              <el-form-item label="速率(周期/秒)">
+                <el-input-number v-model="platformForm.rate" :min="1" :max="10000" :step="100" style="width:180px" />
+              </el-form-item>
+              <el-form-item label="使用站点数">
+                <el-input-number v-model="platformForm.stationCount" :min="0" :max="Math.max(onlineCount,1)" style="width:180px" />
+              </el-form-item>
+
+              <el-divider content-position="left">openGauss 连接（测试平台数据库）</el-divider>
+
+              <el-form-item label="数据库地址">
+                <el-input v-model="platformForm.gaussHost" style="width:200px" placeholder="192.168.123.124" />
+              </el-form-item>
+              <el-form-item label="端口">
+                <el-input-number v-model="platformForm.gaussPort" :min="1" :max="65535" style="width:180px" />
+              </el-form-item>
+              <el-form-item label="数据库名">
+                <el-input v-model="platformForm.gaussDb" style="width:180px" placeholder="wnt" />
+              </el-form-item>
+              <el-form-item label="Schema">
+                <el-input v-model="platformForm.gaussSchema" style="width:180px" placeholder="soc" />
+              </el-form-item>
+              <el-form-item label="用户名">
+                <el-input v-model="platformForm.gaussUser" style="width:180px" placeholder="soc" autocomplete="off" />
+              </el-form-item>
+              <el-form-item label="密码">
+                <el-input v-model="platformForm.gaussPass" type="password" show-password style="width:180px" autocomplete="new-password" />
+              </el-form-item>
+
+              <el-divider content-position="left">U 盘 SN 来源</el-divider>
+
+              <el-form-item label="SN 列表">
+                <el-input
+                  v-model="platformForm.deviceSNs"
+                  type="textarea" :rows="3"
+                  style="width:100%"
+                  placeholder="每行一个 SN，仅使用已收录（status=3）的 U 盘。留空则自动从平台查询已收录 U 盘。"
+                />
+                <div style="font-size:12px;color:#909399;width:100%">支持换行或逗号分隔；多个 SN 轮询循环使用。</div>
+              </el-form-item>
+
+              <el-form-item>
+                <el-button type="primary" @click="startGen('platform')" :disabled="platformStats.running" :loading="starting==='platform'">
+                  <el-icon><VideoPlay /></el-icon>开始生成
+                </el-button>
+                <el-button type="warning" @click="stopGen('platform')" :disabled="!platformStats.running" style="margin-left:8px">
+                  <el-icon><VideoPause /></el-icon>停止
+                </el-button>
+              </el-form-item>
+            </el-form>
+
+            <!-- 平台统计 -->
+            <el-descriptions v-if="platformStats.running || platformStats.sent>0" :column="2" border size="small">
+              <el-descriptions-item label="状态">
+                <el-tag :type="platformStats.running?'success':'info'" size="small" effect="dark">{{platformStats.running?'生成中':'已结束'}}</el-tag>
+              </el-descriptions-item>
+              <el-descriptions-item label="完成周期">
+                <b style="color:#409eff">{{formatNum(platformStats.sent)||0}}</b> / {{formatNum(platformStats.total)||0}}
+              </el-descriptions-item>
+              <el-descriptions-item label="已领取(类型4)">{{formatNum(platformStats.claimSent)||0}}</el-descriptions-item>
+              <el-descriptions-item label="已归还(类型5)">{{formatNum(platformStats.returnSent)||0}}</el-descriptions-item>
+              <el-descriptions-item label="错误"><b :class="platformStats.errors>0?'danger-text':''">{{platformStats.errors||0}}</b></el-descriptions-item>
+              <el-descriptions-item label="平均速率">{{platformStats.rate||0}} 周期/秒</el-descriptions-item>
+              <el-descriptions-item label="已运行">{{formatElapsed(platformStats.elapsed)}}</el-descriptions-item>
+              <el-descriptions-item label="开始时间" v-if="platformStats.startTime">{{platformStats.startTime}}</el-descriptions-item>
+              <el-descriptions-item label="结束时间" v-if="!platformStats.running && platformStats.endTime">{{platformStats.endTime}}</el-descriptions-item>
+            </el-descriptions>
+            <el-empty v-else description="平台模式未运行" :image-size="60" />
+          </el-card>
+        </el-col>
+      </el-row>
     </div>
   `,
   data() {
     return {
       onlineCount: 0,
-      starting: false,
-      stats: {},
+      starting: '',
+      localStats: {},
+      platformStats: {},
       statsTimer: null,
       sasocTip: '',
-      form: {
-        mode: 'local',
+      localForm: {
         total: 1000000,
         rate: 1000,
         stationCount: 0,
         opTypes: ['insert', 'remove', 'scan', 'kill'],
         snPrefix: 'USB-',
         snPoolSize: 1000,
+      },
+      platformForm: {
+        total: 1000000,
+        rate: 1000,
+        stationCount: 0,
         gaussHost: '',
         gaussPort: 5432,
         gaussDb: 'wnt',
@@ -2460,9 +2470,13 @@ const AuditGenPage = {
     };
   },
   computed: {
-    progressPercent() {
-      if (!this.stats.total) return 0;
-      return Math.min(100, Math.floor((this.stats.sent || 0) / this.stats.total * 100));
+    localProgressPercent() {
+      if (!this.localStats.total) return 0;
+      return Math.min(100, Math.floor((this.localStats.sent || 0) / this.localStats.total * 100));
+    },
+    platformProgressPercent() {
+      if (!this.platformStats.total) return 0;
+      return Math.min(100, Math.floor((this.platformStats.sent || 0) / this.platformStats.total * 100));
     }
   },
   methods: {
@@ -2494,36 +2508,44 @@ const AuditGenPage = {
       try {
         const r = await apiGet('/auditgen/stats');
         if (r) {
-          this.stats = r;
-          if (r.mode) this.form.mode = r.mode;
+          this.localStats = r.local || {};
+          this.platformStats = r.platform || {};
         }
       } catch {}
     },
-    onModeChange() {
-      this.stats = {};
-      this.loadStats();
-    },
     buildPlatformPayload() {
-      const sns = this.form.deviceSNs
+      const sns = this.platformForm.deviceSNs
         .split(/[\r\n,;\s]+/)
         .map(s => s.trim())
         .filter(Boolean);
       return {
         mode: 'platform',
-        total: this.form.total,
-        rate: this.form.rate,
-        stationCount: this.form.stationCount,
-        openGaussHost: this.form.gaussHost.trim(),
-        openGaussPort: this.form.gaussPort,
-        openGaussDB: this.form.gaussDb.trim(),
-        openGaussSchema: this.form.gaussSchema.trim(),
-        openGaussUser: this.form.gaussUser.trim(),
-        openGaussPassword: this.form.gaussPass,
+        total: this.platformForm.total,
+        rate: this.platformForm.rate,
+        stationCount: this.platformForm.stationCount,
+        openGaussHost: this.platformForm.gaussHost.trim(),
+        openGaussPort: this.platformForm.gaussPort,
+        openGaussDB: this.platformForm.gaussDb.trim(),
+        openGaussSchema: this.platformForm.gaussSchema.trim(),
+        openGaussUser: this.platformForm.gaussUser.trim(),
+        openGaussPassword: this.platformForm.gaussPass,
         deviceSNs: sns,
       };
     },
-    async startGen() {
-      if (this.form.total < 1) {
+    buildLocalPayload() {
+      return {
+        mode: 'local',
+        total: this.localForm.total,
+        rate: this.localForm.rate,
+        stationCount: this.localForm.stationCount,
+        opTypes: this.localForm.opTypes,
+        snPrefix: this.localForm.snPrefix,
+        snPoolSize: this.localForm.snPoolSize,
+      };
+    },
+    async startGen(mode) {
+      const form = mode === 'platform' ? this.platformForm : this.localForm;
+      if (form.total < 1) {
         ElementPlus.ElMessage.warning('目标条数必须大于 0');
         return;
       }
@@ -2531,33 +2553,33 @@ const AuditGenPage = {
         ElementPlus.ElMessage.warning('没有在线站点，请先在安检站管理页面启动站点');
         return;
       }
-      if (this.form.mode === 'local' && this.form.opTypes.length === 0) {
+      if (mode === 'local' && form.opTypes.length === 0) {
         ElementPlus.ElMessage.warning('请至少选择一种操作类型');
         return;
       }
-      if (this.form.mode === 'platform') {
-        if (!this.form.gaussHost.trim()) {
+      if (mode === 'platform') {
+        if (!form.gaussHost.trim()) {
           ElementPlus.ElMessage.warning('请填写 openGauss 数据库地址');
           return;
         }
-        if (!this.form.gaussUser.trim()) {
+        if (!form.gaussUser.trim()) {
           ElementPlus.ElMessage.warning('请填写 openGauss 用户名');
           return;
         }
-        if (!this.form.gaussPass) {
+        if (!form.gaussPass) {
           ElementPlus.ElMessage.warning('请填写 openGauss 密码');
           return;
         }
       }
       try {
-        const msg = this.form.mode === 'platform'
-          ? `确认开始生成 ${this.form.total.toLocaleString()} 个申领-领取-归还周期？\n\n` +
+        const msg = mode === 'platform'
+          ? `确认开始生成 ${form.total.toLocaleString()} 个申领-领取-归还周期？\n\n` +
             `目标平台：${this.sasocTip || '（当前配置）'}\n` +
-            `openGauss：${this.form.gaussHost.trim()}:${this.form.gaussPort}/${this.form.gaussDb.trim()}\n` +
+            `openGauss：${form.gaussHost.trim()}:${form.gaussPort}/${form.gaussDb.trim()}\n` +
             `请确认这是独立的【测试实例】，而非生产平台（192.168.60.162）。\n\n` +
             `每个周期平台侧：U盘审计类型4+类型5 各 +1，安检站策略审计 +3。\n` +
             `工具会自动为已收录U盘插入申领记录（wl_usb_apply）并模拟「申领码验证→领取→归还」。`
-          : `确认开始生成 ${this.form.total.toLocaleString()} 条操作日志？\n\n` +
+          : `确认开始生成 ${form.total.toLocaleString()} 条操作日志？\n\n` +
             `目标平台：${this.sasocTip || '（当前配置）'}\n` +
             `请确认这是独立的【测试实例】，而非生产平台（192.168.60.162）。\n\n` +
             `生成后，平台侧的 U盘审计与安检站策略审计将各增加相同条数。`;
@@ -2567,22 +2589,22 @@ const AuditGenPage = {
         );
       } catch { return; }
 
-      this.starting = true;
+      this.starting = mode;
       try {
-        const payload = this.form.mode === 'platform' ? this.buildPlatformPayload() : this.form;
+        const payload = mode === 'platform' ? this.buildPlatformPayload() : this.buildLocalPayload();
         const r = await apiPost('/auditgen/start', payload);
         ElementPlus.ElMessage.success(`已启动，目标 ${r.total} 条，使用 ${r.stationCount} 个站点`);
         this.loadStats();
       } catch (e) {
         ElementPlus.ElMessage.error('启动失败: ' + e.message);
       } finally {
-        this.starting = false;
+        this.starting = '';
       }
     },
-    async stopGen() {
+    async stopGen(mode) {
       try {
-        await apiPost('/auditgen/stop');
-        ElementPlus.ElMessage.success('已停止生成');
+        await apiPost('/auditgen/stop', { mode });
+        ElementPlus.ElMessage.success((mode === 'platform' ? '平台模式' : '本地模式') + '已停止生成');
         this.loadStats();
       } catch (e) {
         ElementPlus.ElMessage.error('停止失败: ' + e.message);

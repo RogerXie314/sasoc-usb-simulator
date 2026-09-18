@@ -49,7 +49,7 @@ type AuditGenConfig struct {
 	// 平台数据模式（CMDID103→104→105）
 	OpenGaussHost     string   `json:"openGaussHost"`     // openGauss 地址
 	OpenGaussPort     int      `json:"openGaussPort"`     // 端口（默认 5432）
-	OpenGaussDB       string   `json:"openGaussDB"`       // 数据库名（默认 sasoc）
+	OpenGaussDB       string   `json:"openGaussDB"`       // 数据库名（默认 wnt）
 	OpenGaussSchema   string   `json:"openGaussSchema"`   // schema（默认 soc）
 	OpenGaussUser     string   `json:"openGaussUser"`     // 用户名
 	OpenGaussPassword string   `json:"openGaussPassword"` // 密码
@@ -72,9 +72,8 @@ type AuditGenStats struct {
 	Mode       string `json:"mode"` // 当前模式
 }
 
-// auditGenManager 全局审计生成管理器
-type auditGenManager struct {
-	mu         sync.Mutex
+// auditGenTask 单个审计生成任务
+type auditGenTask struct {
 	running    atomic.Bool
 	stopCh     chan struct{}
 	sent       atomic.Int64
@@ -89,7 +88,15 @@ type auditGenManager struct {
 	mode       string
 }
 
-var globalAuditGenMgr = &auditGenManager{}
+// auditGenManager 按 mode 管理多个审计生成任务
+type auditGenManager struct {
+	mu    sync.RWMutex
+	tasks map[string]*auditGenTask // key: "local" | "platform"
+}
+
+var globalAuditGenMgr = &auditGenManager{
+	tasks: make(map[string]*auditGenTask),
+}
 
 // isProtectedSasocHost 校验目标地址是否落在生产平台黑名单
 func isProtectedSasocHost(host string) bool {
@@ -102,31 +109,7 @@ func isProtectedSasocHost(host string) bool {
 	return false
 }
 
-// startAuditGen POST /api/v1/auditgen/start
-func (ag *auditGenHandler) startAuditGen(c *gin.Context) {
-	var req AuditGenConfig
-	if err := c.ShouldBindJSON(&req); err != nil {
-		responseError(c, http.StatusBadRequest, "invalid request: "+err.Error())
-		return
-	}
-
-	mgr := globalAuditGenMgr
-	mgr.mu.Lock()
-	defer mgr.mu.Unlock()
-
-	if mgr.running.Load() {
-		responseError(c, http.StatusConflict, "audit generation is already running")
-		return
-	}
-
-	// 生产环境保护
-	if ag.cfg != nil && isProtectedSasocHost(ag.cfg.Sasoc.Host) {
-		responseError(c, http.StatusBadRequest,
-			fmt.Sprintf("refused: target sasoc host %s is a production platform, please config a test instance", ag.cfg.Sasoc.Host))
-		return
-	}
-
-	// 参数归一化
+func normalizeAuditGenConfig(req *AuditGenConfig) {
 	if req.Total <= 0 {
 		req.Total = 1000000
 	}
@@ -140,11 +123,12 @@ func (ag *auditGenHandler) startAuditGen(c *gin.Context) {
 		req.Mode = "local"
 	}
 	req.Mode = strings.ToLower(req.Mode)
+}
 
+func selectOnlineStations(ag *auditGenHandler, req AuditGenConfig) ([]*simulator.SimStation, int, error) {
 	onlineStations := ag.hub.ListStationsByStatus(simulator.StateOnline)
 	if len(onlineStations) == 0 {
-		responseError(c, http.StatusBadRequest, "no online stations available, please start stations first")
-		return
+		return nil, 0, fmt.Errorf("no online stations available, please start stations first")
 	}
 
 	count := req.StationCount
@@ -154,32 +138,65 @@ func (ag *auditGenHandler) startAuditGen(c *gin.Context) {
 	if count <= 0 {
 		count = len(onlineStations)
 	}
-	selected := onlineStations[:count]
+	return onlineStations[:count], len(onlineStations), nil
+}
 
-	mgr.stopCh = make(chan struct{})
-	mgr.sent.Store(0)
-	mgr.claimSent.Store(0)
-	mgr.returnSent.Store(0)
-	mgr.errs.Store(0)
-	mgr.total.Store(int64(req.Total))
-	mgr.rate = int64(req.Rate)
-	mgr.startTime = time.Now()
-	mgr.endTime = time.Time{}
-	mgr.startStr = mgr.startTime.Format("2006-01-02 15:04:05")
-	mgr.mode = req.Mode
-	mgr.running.Store(true)
+// startAuditGen POST /api/v1/auditgen/start
+func (ag *auditGenHandler) startAuditGen(c *gin.Context) {
+	var req AuditGenConfig
+	if err := c.ShouldBindJSON(&req); err != nil {
+		responseError(c, http.StatusBadRequest, "invalid request: "+err.Error())
+		return
+	}
+
+	normalizeAuditGenConfig(&req)
+
+	mgr := globalAuditGenMgr
+	mgr.mu.Lock()
+	defer mgr.mu.Unlock()
+
+	// 同模式冲突检查
+	if t, ok := mgr.tasks[req.Mode]; ok && t.running.Load() {
+		responseError(c, http.StatusConflict, "audit generation for mode '"+req.Mode+"' is already running")
+		return
+	}
+
+	// 生产环境保护
+	if ag.cfg != nil && isProtectedSasocHost(ag.cfg.Sasoc.Host) {
+		responseError(c, http.StatusBadRequest,
+			fmt.Sprintf("refused: target sasoc host %s is a production platform, please config a test instance", ag.cfg.Sasoc.Host))
+		return
+	}
+
+	selected, onlineCount, err := selectOnlineStations(ag, req)
+	if err != nil {
+		responseError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	task := &auditGenTask{
+		stopCh:    make(chan struct{}),
+		rate:      int64(req.Rate),
+		startTime: time.Now(),
+		startStr:  time.Now().Format("2006-01-02 15:04:05"),
+		mode:      req.Mode,
+	}
+	task.total.Store(int64(req.Total))
+	task.running.Store(true)
+
+	mgr.tasks[req.Mode] = task
 
 	if req.Mode == "platform" {
-		go runPlatformAuditGen(selected, req)
+		go runPlatformAuditGen(selected, req, task)
 	} else {
-		go runLocalAuditGen(selected, req)
+		go runLocalAuditGen(selected, req, task)
 	}
 
 	zap.L().Info("audit generation started",
 		zap.String("mode", req.Mode),
-		zap.Int64("total", mgr.total.Load()),
+		zap.Int64("total", task.total.Load()),
 		zap.Int("rate", req.Rate),
-		zap.Int("stations", count),
+		zap.Int("stations", len(selected)),
 	)
 
 	responseSuccess(c, gin.H{
@@ -187,45 +204,87 @@ func (ag *auditGenHandler) startAuditGen(c *gin.Context) {
 		"mode":           req.Mode,
 		"total":          req.Total,
 		"rate":           req.Rate,
-		"stationCount":   count,
-		"onlineStations": len(onlineStations),
+		"stationCount":   len(selected),
+		"onlineStations": onlineCount,
 	})
 }
 
 // stopAuditGen POST /api/v1/auditgen/stop
 func (ag *auditGenHandler) stopAuditGen(c *gin.Context) {
+	var req struct {
+		Mode string `json:"mode"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		// 兼容旧版：请求体可能为空，尝试默认停止所有
+		req.Mode = ""
+	}
+
 	mgr := globalAuditGenMgr
 	mgr.mu.Lock()
 	defer mgr.mu.Unlock()
 
-	if !mgr.running.Load() {
+	if req.Mode != "" {
+		// 停止指定模式
+		task, ok := mgr.tasks[req.Mode]
+		if !ok || !task.running.Load() {
+			responseError(c, http.StatusBadRequest, "no audit generation is running for mode '"+req.Mode+"'")
+			return
+		}
+		stopTask(task)
+		responseSuccess(c, gin.H{
+			"message": "audit generation stopped for mode " + req.Mode,
+			"stats":   buildAuditGenStats(task),
+		})
+		return
+	}
+
+	// 未指定 mode：停止所有运行中的任务
+	stopped := false
+	var lastStats AuditGenStats
+	for _, task := range mgr.tasks {
+		if task.running.Load() {
+			stopTask(task)
+			lastStats = buildAuditGenStats(task)
+			stopped = true
+		}
+	}
+	if !stopped {
 		responseError(c, http.StatusBadRequest, "no audit generation is running")
 		return
 	}
-	mgr.running.Store(false)
-	mgr.endTime = time.Now()
-	if mgr.stopCh != nil {
-		close(mgr.stopCh)
-		mgr.stopCh = nil
-	}
-
 	responseSuccess(c, gin.H{
-		"message": "audit generation stopped",
-		"stats":   auditGenStatsInternal(),
+		"message": "all audit generation stopped",
+		"stats":   lastStats,
 	})
+}
+
+func stopTask(task *auditGenTask) {
+	task.running.Store(false)
+	task.endTime = time.Now()
+	if task.stopCh != nil {
+		close(task.stopCh)
+		task.stopCh = nil
+	}
 }
 
 // getAuditGenStats GET /api/v1/auditgen/stats
 func (ag *auditGenHandler) getAuditGenStats(c *gin.Context) {
-	responseSuccess(c, auditGenStatsInternal())
+	mgr := globalAuditGenMgr
+	mgr.mu.RLock()
+	defer mgr.mu.RUnlock()
+
+	result := make(map[string]AuditGenStats)
+	for mode, task := range mgr.tasks {
+		result[mode] = buildAuditGenStats(task)
+	}
+	responseSuccess(c, result)
 }
 
-func auditGenStatsInternal() AuditGenStats {
-	mgr := globalAuditGenMgr
-	sent := mgr.sent.Load()
+func buildAuditGenStats(task *auditGenTask) AuditGenStats {
+	sent := task.sent.Load()
 	elapsed := int64(0)
-	if !mgr.startTime.IsZero() {
-		elapsed = int64(time.Since(mgr.startTime).Seconds())
+	if !task.startTime.IsZero() {
+		elapsed = int64(time.Since(task.startTime).Seconds())
 		if elapsed < 0 {
 			elapsed = 0
 		}
@@ -235,25 +294,25 @@ func auditGenStatsInternal() AuditGenStats {
 		rate = sent / elapsed
 	}
 	remaining := int64(0)
-	if rate > 0 && sent < mgr.total.Load() {
-		remaining = (mgr.total.Load() - sent) / rate
+	if rate > 0 && sent < task.total.Load() {
+		remaining = (task.total.Load() - sent) / rate
 	}
 
 	stats := AuditGenStats{
-		Running:    mgr.running.Load(),
-		Total:      mgr.total.Load(),
+		Running:    task.running.Load(),
+		Total:      task.total.Load(),
 		Sent:       sent,
-		ClaimSent:  mgr.claimSent.Load(),
-		ReturnSent: mgr.returnSent.Load(),
-		Errors:     mgr.errs.Load(),
+		ClaimSent:  task.claimSent.Load(),
+		ReturnSent: task.returnSent.Load(),
+		Errors:     task.errs.Load(),
 		Rate:       rate,
 		RemainingS: remaining,
-		StartTime:  mgr.startStr,
+		StartTime:  task.startStr,
 		Elapsed:    elapsed,
-		Mode:       mgr.mode,
+		Mode:       task.mode,
 	}
-	if !mgr.endTime.IsZero() {
-		stats.EndTime = mgr.endTime.Format("2006-01-02 15:04:05")
+	if !task.endTime.IsZero() {
+		stats.EndTime = task.endTime.Format("2006-01-02 15:04:05")
 	}
 	return stats
 }
@@ -268,9 +327,7 @@ func buildSnPool(prefix string, size int) []string {
 	return pool
 }
 
-func runLocalAuditGen(stations []*simulator.SimStation, cfg AuditGenConfig) {
-	mgr := globalAuditGenMgr
-
+func runLocalAuditGen(stations []*simulator.SimStation, cfg AuditGenConfig, task *auditGenTask) {
 	const tickInterval = 100 * time.Millisecond
 	perTick := cfg.Rate / 10
 	if perTick < 1 {
@@ -294,17 +351,17 @@ func runLocalAuditGen(stations []*simulator.SimStation, cfg AuditGenConfig) {
 
 	idx := 0
 	for {
-		if mgr.sent.Load() >= mgr.total.Load() {
-			finishAuditGen(mgr)
+		if task.sent.Load() >= task.total.Load() {
+			finishTask(task)
 			return
 		}
 
 		select {
-		case <-mgr.stopCh:
+		case <-task.stopCh:
 			return
 		case <-ticker.C:
 			for i := 0; i < perTick; i++ {
-				if mgr.sent.Load() >= mgr.total.Load() {
+				if task.sent.Load() >= task.total.Load() {
 					break
 				}
 				station := stations[idx%len(stations)]
@@ -328,9 +385,9 @@ func runLocalAuditGen(stations []*simulator.SimStation, cfg AuditGenConfig) {
 				}
 
 				if err := commands.SendCommand(station, protocol.CmdOperationLog, params); err != nil {
-					mgr.errs.Add(1)
+					task.errs.Add(1)
 				} else {
-					mgr.sent.Add(1)
+					task.sent.Add(1)
 				}
 			}
 		}
@@ -339,15 +396,13 @@ func runLocalAuditGen(stations []*simulator.SimStation, cfg AuditGenConfig) {
 
 // ==================== 平台数据模式（CMDID103→104→105）====================
 
-func runPlatformAuditGen(stations []*simulator.SimStation, cfg AuditGenConfig) {
-	mgr := globalAuditGenMgr
-
+func runPlatformAuditGen(stations []*simulator.SimStation, cfg AuditGenConfig, task *auditGenTask) {
 	// 连接参数归一化
 	if cfg.OpenGaussPort <= 0 {
 		cfg.OpenGaussPort = 5432
 	}
 	if cfg.OpenGaussDB == "" {
-		cfg.OpenGaussDB = "sasoc"
+		cfg.OpenGaussDB = "wnt"
 	}
 	if cfg.OpenGaussSchema == "" {
 		cfg.OpenGaussSchema = "soc"
@@ -365,8 +420,8 @@ func runPlatformAuditGen(stations []*simulator.SimStation, cfg AuditGenConfig) {
 	client, err := db.NewOpenGaussClient(gaussCfg)
 	if err != nil {
 		zap.L().Error("openGauss connect failed", zap.Error(err))
-		mgr.errs.Add(mgr.total.Load())
-		finishAuditGen(mgr)
+		task.errs.Add(task.total.Load())
+		finishTask(task)
 		return
 	}
 	defer client.Close()
@@ -390,25 +445,22 @@ func runPlatformAuditGen(stations []*simulator.SimStation, cfg AuditGenConfig) {
 		sns, err = client.QueryReceivedDevices(1000) // 默认取已收录设备做轮询池
 		if err != nil {
 			zap.L().Error("query devices failed", zap.Error(err))
-			mgr.errs.Add(mgr.total.Load())
-			finishAuditGen(mgr)
+			task.errs.Add(task.total.Load())
+			finishTask(task)
 			return
 		}
 	}
 
 	if len(sns) == 0 {
 		zap.L().Error("no received devices found, please check openGauss config or input SN list")
-		mgr.errs.Add(mgr.total.Load())
-		finishAuditGen(mgr)
+		task.errs.Add(task.total.Load())
+		finishTask(task)
 		return
 	}
 
 	zap.L().Info("platform audit gen ready", zap.Int("deviceCount", len(sns)))
 
 	// 3. 发送循环：每个周期 = INSERT 新申领记录 → CMDID103 → 104 → 105
-	//    平台侧 103 只校验不消费；104 领取（条件更新 apply RECEIVED，写类型4审计）；
-	//    105 归还（apply RETURNED、device 恢复已收录，写类型5审计）。
-	//    申领记录一次性，故每周期必须新插一条（getApplyTimeWindow 保证时间窗覆盖当前）。
 	const tickInterval = 100 * time.Millisecond
 	perTick := cfg.Rate / 10
 	if perTick < 1 {
@@ -420,17 +472,17 @@ func runPlatformAuditGen(stations []*simulator.SimStation, cfg AuditGenConfig) {
 
 	cycleIdx := 0
 	for {
-		if mgr.sent.Load() >= mgr.total.Load() {
-			finishAuditGen(mgr)
+		if task.sent.Load() >= task.total.Load() {
+			finishTask(task)
 			return
 		}
 
 		select {
-		case <-mgr.stopCh:
+		case <-task.stopCh:
 			return
 		case <-ticker.C:
 			for i := 0; i < perTick; i++ {
-				if mgr.sent.Load() >= mgr.total.Load() {
+				if task.sent.Load() >= task.total.Load() {
 					break
 				}
 
@@ -447,7 +499,7 @@ func runPlatformAuditGen(stations []*simulator.SimStation, cfg AuditGenConfig) {
 				code := db.GenerateApplyCode()
 				startTime, endTime := applyTimeWindow(time.Now())
 				if err := client.InsertApplyRecord(sn, code, "AuditGen", "AUDIT001", "1", startTime, endTime); err != nil {
-					mgr.errs.Add(1)
+					task.errs.Add(1)
 					zap.L().Warn("insert apply record failed", zap.String("sn", sn), zap.Error(err))
 					continue
 				}
@@ -456,7 +508,7 @@ func runPlatformAuditGen(stations []*simulator.SimStation, cfg AuditGenConfig) {
 				if err := commands.SendCommand(station, protocol.CmdClaimVerify, map[string]interface{}{
 					"applyCode": code,
 				}); err != nil {
-					mgr.errs.Add(1)
+					task.errs.Add(1)
 					continue
 				}
 
@@ -466,20 +518,20 @@ func runPlatformAuditGen(stations []*simulator.SimStation, cfg AuditGenConfig) {
 					"sn":        sn,
 					"result":    "success",
 				}); err != nil {
-					mgr.errs.Add(1)
+					task.errs.Add(1)
 					continue
 				}
-				mgr.claimSent.Add(1)
+				task.claimSent.Add(1)
 
 				// d. CMDID105 U盘归还（写类型5审计）
 				if err := commands.SendCommand(station, protocol.CmdUsbReturn, map[string]interface{}{
 					"sn": sn,
 				}); err != nil {
-					mgr.errs.Add(1)
+					task.errs.Add(1)
 					continue
 				}
-				mgr.returnSent.Add(1)
-				mgr.sent.Add(1) // 一个完整周期计 1 条（平台侧类型4+类型5 各 +1，另策略审计 3 条）
+				task.returnSent.Add(1)
+				task.sent.Add(1) // 一个完整周期计 1 条（平台侧类型4+类型5 各 +1，另策略审计 3 条）
 			}
 		}
 	}
@@ -490,20 +542,18 @@ func applyTimeWindow(now time.Time) (time.Time, time.Time) {
 	return now.Add(-1 * time.Hour), now.Add(7 * 24 * time.Hour)
 }
 
-func finishAuditGen(mgr *auditGenManager) {
-	mgr.mu.Lock()
-	mgr.running.Store(false)
-	mgr.endTime = time.Now()
-	if mgr.stopCh != nil {
-		close(mgr.stopCh)
-		mgr.stopCh = nil
+func finishTask(task *auditGenTask) {
+	task.running.Store(false)
+	task.endTime = time.Now()
+	if task.stopCh != nil {
+		close(task.stopCh)
+		task.stopCh = nil
 	}
-	mgr.mu.Unlock()
 	zap.L().Info("audit generation finished",
-		zap.String("mode", mgr.mode),
-		zap.Int64("sent", mgr.sent.Load()),
-		zap.Int64("claimSent", mgr.claimSent.Load()),
-		zap.Int64("returnSent", mgr.returnSent.Load()),
-		zap.Int64("errors", mgr.errs.Load()),
-		zap.Duration("elapsed", time.Since(mgr.startTime)))
+		zap.String("mode", task.mode),
+		zap.Int64("sent", task.sent.Load()),
+		zap.Int64("claimSent", task.claimSent.Load()),
+		zap.Int64("returnSent", task.returnSent.Load()),
+		zap.Int64("errors", task.errs.Load()),
+		zap.Duration("elapsed", time.Since(task.startTime)))
 }

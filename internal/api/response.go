@@ -7,7 +7,7 @@ import (
 )
 
 // AppVersion 应用版本号（与 main.go 保持同步）
-const AppVersion = "V3.2.0"
+const AppVersion = "V3.2.1"
 
 // responseSuccess 成功响应
 func responseSuccess(c *gin.Context, data interface{}) {

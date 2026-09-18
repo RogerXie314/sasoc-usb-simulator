@@ -29,9 +29,10 @@ clean:
 build-win:
 	GOOS=windows GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(APP_NAME).exe .
 
-# 交叉编译 Windows GUI 模式（无黑窗口，日志写文件，启动自动打开浏览器）
+# Windows GUI 模式（无黑窗口，日志写文件，任务栏图标右键退出）
+# 注意：必须在 Windows 本机直接编译，交叉编译 GOOS=windows 会导致 -H windowsgui 失效
 build-win-gui:
-	GOOS=windows GOARCH=amd64 go build -ldflags "$(LDFLAGS) -H windowsgui" -o $(BUILD_DIR)/$(APP_NAME)-gui.exe .
+	go build -ldflags "$(LDFLAGS) -H windowsgui" -o $(BUILD_DIR)/$(APP_NAME)-gui.exe .
 
 # 交叉编译 Linux
 build-linux:

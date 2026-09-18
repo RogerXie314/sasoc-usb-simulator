@@ -103,6 +103,11 @@ func SetupRouter(h *hub.Hub, cfg *config.Config) *gin.Engine {
 		v1.POST("/pressure/stop", pressureHandler.stopPressure)
 		v1.GET("/pressure/stats", pressureHandler.getPressureStats)
 
+		auditGenHandler := newAuditGenHandler(h, cfg)
+		v1.POST("/auditgen/start", auditGenHandler.startAuditGen)
+		v1.POST("/auditgen/stop", auditGenHandler.stopAuditGen)
+		v1.GET("/auditgen/stats", auditGenHandler.getAuditGenStats)
+
 		claimHandler := newClaimHandler(h)
 		v1.POST("/claim/start", claimHandler.startClaim)
 		v1.GET("/claim/status", claimHandler.statusClaim)

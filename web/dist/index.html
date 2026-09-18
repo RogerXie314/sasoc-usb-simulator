@@ -96,7 +96,7 @@ html,body,#app{height:100%;font-family:'Microsoft YaHei','PingFang SC',sans-seri
     <div class="logo">
       <span class="dot"></span>
       移动介质安检站模拟测试工具
-      <span class="app-version">V3.0.3</span>
+      <span class="app-version">V3.1.0</span>
     </div>
     <div class="header-right">
       <div class="sasoc-config" @click="showSasocDialog" title="点击修改SASOC服务器地址">
@@ -169,9 +169,13 @@ html,body,#app{height:100%;font-family:'Microsoft YaHei','PingFang SC',sans-seri
           <el-icon><Document /></el-icon>
           <span>消息日志</span>
         </el-menu-item>
-        <el-menu-item index="/pressure">
+<el-menu-item index="/pressure">
           <el-icon><DataLine /></el-icon>
           <span>压力测试</span>
+        </el-menu-item>
+        <el-menu-item index="/auditgen">
+          <el-icon><Tickets /></el-icon>
+          <span>审计数据生成</span>
         </el-menu-item>
         <el-menu-item index="/claim">
           <el-icon><DocumentChecked /></el-icon>
@@ -2224,6 +2228,253 @@ const PressurePage = {
 };
 
 // ============================================================
+// 审计数据生成页：批量生成 U盘审计 + 安检站策略审计（各 100 万）
+// 通过 CMDID107 操作日志上报，平台侧 wl_usb_audit_log / wl_usb_strategy_audit 各 +1
+// ============================================================
+const AuditGenPage = {
+  template: `
+    <div>
+      <div class="page-header">
+        <h2>审计数据生成</h2>
+        <el-button @click="loadStations"><el-icon><Refresh /></el-icon>刷新在线站点</el-button>
+      </div>
+
+      <!-- 目标平台提示（生产保护） -->
+      <el-alert type="warning" :closable="false" show-icon style="margin-bottom:16px">
+        <template #title>
+          目标平台：{{sasocTip || '读取中…'}} — 请确认是<b>独立测试实例</b>。该功能仅用于向测试平台批量写入
+          U盘审计（wl_usb_audit_log）与安检站策略审计（wl_usb_strategy_audit）数据，
+          禁止指向生产平台（192.168.123.24 / 192.168.60.162）。
+        </template>
+      </el-alert>
+
+      <!-- 统计栏 -->
+      <div class="stat-cards">
+        <div class="stat-card">
+          <div class="stat-label">目标总条数</div>
+          <div class="stat-value">{{formatNum(stats.total)||0}}</div>
+          <el-icon class="stat-icon"><Memo /></el-icon>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">已发送</div>
+          <div class="stat-value success">{{formatNum(stats.sent)||0}}</div>
+          <el-icon class="stat-icon"><DocumentChecked /></el-icon>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">生成速率</div>
+          <div class="stat-value">{{stats.rate||0}} 条/秒</div>
+          <el-icon class="stat-icon"><TrendCharts /></el-icon>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">发送错误</div>
+          <div class="stat-value" :class="stats.errors>0?'danger':'success'">{{stats.errors||0}}</div>
+          <el-icon class="stat-icon"><CircleClose /></el-icon>
+        </div>
+      </div>
+
+      <!-- 运行状态 -->
+      <el-card v-if="stats.running" style="margin-bottom:20px" body-style="padding:16px 20px">
+        <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+          <el-tag type="success" effect="dark" size="large">生成中</el-tag>
+          <span style="font-size:14px;color:#606266">开始时间: {{stats.startTime}}</span>
+          <span style="font-size:14px;color:#606266">已发送: {{formatNum(stats.sent)}} / {{formatNum(stats.total)}}</span>
+          <el-progress :percentage="progressPercent" style="width:220px" />
+          <span style="font-size:14px;color:#909399" v-if="stats.remainingS>0">预计剩余 {{stats.remainingS}}s</span>
+          <el-button type="danger" @click="stopGen" style="margin-left:auto">停止生成</el-button>
+        </div>
+      </el-card>
+
+      <!-- 配置区 -->
+      <el-card style="margin-bottom:20px">
+        <template #header><span style="font-weight:600">生成配置</span></template>
+        <el-form :model="form" label-width="130px" size="default">
+          <el-form-item label="在线站点">
+            <span style="color:#909399;font-size:13px">当前在线 {{onlineCount}} 个，将使用前 {{form.stationCount>0?form.stationCount:onlineCount}} 个</span>
+          </el-form-item>
+          <el-form-item label="使用站点数量">
+            <el-input-number v-model="form.stationCount" :min="0" :max="Math.max(onlineCount,1)" style="width:200px" />
+            <span style="margin-left:12px;font-size:12px;color:#909399">0 = 全部在线站点</span>
+          </el-form-item>
+
+          <el-divider content-position="left">数据规模</el-divider>
+
+          <el-form-item label="目标总条数">
+            <el-input-number v-model="form.total" :min="1" :max="5000000" :step="10000" style="width:200px" />
+            <span style="margin-left:12px;font-size:12px;color:#909399">对应平台规格 100 万条（U盘审计+策略审计各写入 N 条）</span>
+          </el-form-item>
+          <el-form-item label="生成速率(条/秒)">
+            <el-input-number v-model="form.rate" :min="1" :max="10000" :step="100" style="width:200px" />
+            <span style="margin-left:12px;font-size:12px;color:#909399">默认 1000，上限 10000；建议按平台处理能力调低</span>
+          </el-form-item>
+
+          <el-divider content-position="left">数据内容</el-divider>
+
+          <el-form-item label="操作类型">
+            <el-checkbox-group v-model="form.opTypes">
+              <el-checkbox v-for="opt in opOptions" :key="opt.value" :value="opt.value" :label="opt.value">
+                {{opt.label}} [auditType {{opt.auditType}}]
+              </el-checkbox>
+            </el-checkbox-group>
+            <div style="font-size:12px;color:#909399;width:100%">平台对每条上报各写一条 U盘审计 + 一条安检站策略审计</div>
+          </el-form-item>
+          <el-form-item label="SN前缀">
+            <el-input v-model="form.snPrefix" style="width:200px" placeholder="USB-" />
+          </el-form-item>
+          <el-form-item label="SN池大小">
+            <el-input-number v-model="form.snPoolSize" :min="1" :max="100000" :step="100" style="width:200px" />
+            <span style="margin-left:12px;font-size:12px;color:#909399">SN 池内循环使用，贴近真实多 U 盘场景</span>
+          </el-form-item>
+
+          <el-form-item>
+            <el-button type="primary" size="large" @click="startGen" :disabled="stats.running" :loading="starting">
+              <el-icon><VideoPlay /></el-icon>开始生成
+            </el-button>
+            <el-button type="warning" size="large" @click="stopGen" :disabled="!stats.running" style="margin-left:12px">
+              <el-icon><VideoPause /></el-icon>停止生成
+            </el-button>
+          </el-form-item>
+        </el-form>
+      </el-card>
+
+      <!-- 实时统计 -->
+      <el-card v-if="stats.running || stats.sent>0">
+        <template #header><span style="font-weight:600">生成统计</span></template>
+        <el-descriptions :column="3" border>
+          <el-descriptions-item label="状态">
+            <el-tag :type="stats.running?'success':'info'" size="small" effect="dark">{{stats.running?'生成中':'已结束'}}</el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="目标总条数">{{formatNum(stats.total)||0}}</el-descriptions-item>
+          <el-descriptions-item label="已发送">
+            <span style="font-size:18px;font-weight:700;color:#409eff">{{formatNum(stats.sent)||0}}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="发送错误">
+            <span style="font-size:18px;font-weight:700" :class="stats.errors>0?'danger-text':''">{{stats.errors||0}}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="平均速率">{{stats.rate||0}} 条/秒</el-descriptions-item>
+          <el-descriptions-item label="已运行">{{formatElapsed(stats.elapsed)}}</el-descriptions-item>
+          <el-descriptions-item label="预计剩余" v-if="stats.running">{{stats.remainingS>0?(stats.remainingS+'s'):'计算中…'}}</el-descriptions-item>
+          <el-descriptions-item label="开始时间">{{stats.startTime||'-'}}</el-descriptions-item>
+          <el-descriptions-item label="结束时间" v-if="!stats.running && stats.endTime">{{stats.endTime}}</el-descriptions-item>
+        </el-descriptions>
+      </el-card>
+    </div>
+  `,
+  data() {
+    return {
+      onlineCount: 0,
+      starting: false,
+      stats: {},
+      statsTimer: null,
+      sasocTip: '',
+      form: {
+        total: 1000000,
+        rate: 1000,
+        stationCount: 0,
+        opTypes: ['insert', 'remove', 'scan', 'kill'],
+        snPrefix: 'USB-',
+        snPoolSize: 1000,
+      },
+      opOptions: [
+        { label: '插入U盘', value: 'insert', auditType: 8 },
+        { label: '拔出U盘', value: 'remove', auditType: 9 },
+        { label: '查毒', value: 'scan', auditType: 12 },
+        { label: '杀毒', value: 'kill', auditType: 13 },
+      ],
+    };
+  },
+  computed: {
+    progressPercent() {
+      if (!this.stats.total) return 0;
+      return Math.min(100, Math.floor((this.stats.sent || 0) / this.stats.total * 100));
+    }
+  },
+  methods: {
+    formatNum(n) {
+      if (n === null || n === undefined) return '';
+      return Number(n).toLocaleString();
+    },
+    formatElapsed(s) {
+      if (!s) return '0s';
+      if (s < 60) return s + 's';
+      const m = Math.floor(s / 60);
+      return m + 'm' + (s % 60) + 's';
+    },
+    async loadStations() {
+      try {
+        const r = await apiGet('/stations');
+        const list = (r && r.stations) || (Array.isArray(r) ? r : []);
+        this.onlineCount = list.filter(s => s.status === 'online').length;
+      } catch {}
+    },
+    async loadSasoc() {
+      try {
+        const r = await apiGet('/config');
+        const c = (r && r.sasoc) || r;
+        if (c && c.host) this.sasocTip = c.host + (c.port ? ':' + c.port : '');
+      } catch {}
+    },
+    async loadStats() {
+      try {
+        const r = await apiGet('/auditgen/stats');
+        if (r) this.stats = r;
+      } catch {}
+    },
+    async startGen() {
+      if (this.form.total < 1) {
+        ElementPlus.ElMessage.warning('目标条数必须大于 0');
+        return;
+      }
+      if (this.form.opTypes.length === 0) {
+        ElementPlus.ElMessage.warning('请至少选择一种操作类型');
+        return;
+      }
+      if (this.onlineCount === 0) {
+        ElementPlus.ElMessage.warning('没有在线站点，请先在安检站管理页面启动站点');
+        return;
+      }
+      try {
+        await ElementPlus.ElMessageBox.confirm(
+          `确认开始生成 ${this.form.total.toLocaleString()} 条操作日志？\n\n` +
+          `目标平台：${this.sasocTip || '（当前配置）'}\n` +
+          `请确认这是独立的【测试实例】，而非生产平台（192.168.123.24 / 192.168.60.162）。\n\n` +
+          `生成后，平台侧的 U盘审计与安检站策略审计将各增加相同条数。`,
+          '审计数据生成确认', { type: 'warning', confirmButtonText: '确认生成' }
+        );
+      } catch { return; }
+
+      this.starting = true;
+      try {
+        const r = await apiPost('/auditgen/start', this.form);
+        ElementPlus.ElMessage.success(`已启动，目标 ${r.total} 条，使用 ${r.stationCount} 个站点`);
+        this.loadStats();
+      } catch (e) {
+        ElementPlus.ElMessage.error('启动失败: ' + e.message);
+      } finally {
+        this.starting = false;
+      }
+    },
+    async stopGen() {
+      try {
+        await apiPost('/auditgen/stop');
+        ElementPlus.ElMessage.success('已停止生成');
+        this.loadStats();
+      } catch (e) {
+        ElementPlus.ElMessage.error('停止失败: ' + e.message);
+      }
+    }
+  },
+  mounted() {
+    this.loadStations();
+    this.loadSasoc();
+    this.loadStats();
+    this.statsTimer = setInterval(this.loadStats, 2000);
+  },
+  beforeUnmount() {
+    if (this.statsTimer) clearInterval(this.statsTimer);
+  }
+};
+
+// ============================================================
 // Claim Code Generation Page
 // ============================================================
 const ClaimPage = {
@@ -2529,7 +2780,8 @@ const routes = [
   { path: '/usb', component: USBPage },
   { path: '/debug', component: DebugPage },
   { path: '/log', component: LogPage },
-  { path: '/pressure', component: PressurePage },
+{ path: '/pressure', component: PressurePage },
+  { path: '/auditgen', component: AuditGenPage },
   { path: '/claim', component: ClaimPage },
   { path: '/:pathMatch(.*)*', redirect: '/' }
 ];

@@ -280,3 +280,27 @@ func TestBuildSnPool(t *testing.T) {
 		t.Fatalf("unexpected pool: %v", pool)
 	}
 }
+
+// TestResolveSnPool 验证 SN 池解析：优先 deviceSNs，否则回退到前缀自动生成
+func TestResolveSnPool(t *testing.T) {
+	// 1. deviceSNs 非空时直接返回
+	cfg1 := AuditGenConfig{DeviceSNs: []string{"disk-16-0050", "disk-16-0008"}}
+	pool1 := resolveSnPool(cfg1)
+	if len(pool1) != 2 || pool1[0] != "disk-16-0050" || pool1[1] != "disk-16-0008" {
+		t.Fatalf("expected user SN list, got %v", pool1)
+	}
+
+	// 2. deviceSNs 为空时按前缀生成
+	cfg2 := AuditGenConfig{SnPrefix: "TEST-", SnPoolSize: 5}
+	pool2 := resolveSnPool(cfg2)
+	if len(pool2) != 5 || pool2[0] != "TEST-000001" || pool2[4] != "TEST-000005" {
+		t.Fatalf("expected auto pool, got %v", pool2)
+	}
+
+	// 3. deviceSNs 为空且参数缺失时使用默认值
+	cfg3 := AuditGenConfig{}
+	pool3 := resolveSnPool(cfg3)
+	if len(pool3) != 1000 || pool3[0] != "USB-000001" {
+		t.Fatalf("expected default pool, got len=%d first=%s", len(pool3), pool3[0])
+	}
+}

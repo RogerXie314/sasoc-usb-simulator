@@ -69,7 +69,8 @@ type AuditGenStats struct {
 	StartTime  string `json:"startTime"`
 	Elapsed    int64  `json:"elapsed"`
 	EndTime    string `json:"endTime"`
-	Mode       string `json:"mode"` // 当前模式
+	Mode       string `json:"mode"`                // 当前模式
+	LastError  string `json:"lastError,omitempty"` // 最近一次错误原因
 }
 
 // auditGenTask 单个审计生成任务
@@ -86,6 +87,7 @@ type auditGenTask struct {
 	endTime    time.Time
 	startStr   string
 	mode       string
+	lastError  string
 }
 
 // auditGenManager 按 mode 管理多个审计生成任务
@@ -310,6 +312,7 @@ func buildAuditGenStats(task *auditGenTask) AuditGenStats {
 		StartTime:  task.startStr,
 		Elapsed:    elapsed,
 		Mode:       task.mode,
+		LastError:  task.lastError,
 	}
 	if !task.endTime.IsZero() {
 		stats.EndTime = task.endTime.Format("2006-01-02 15:04:05")
@@ -325,6 +328,22 @@ func buildSnPool(prefix string, size int) []string {
 		pool = append(pool, fmt.Sprintf("%s%06d", prefix, i))
 	}
 	return pool
+}
+
+// resolveSnPool 优先使用用户提供的 SN 列表，否则按前缀自动生成
+func resolveSnPool(cfg AuditGenConfig) []string {
+	if len(cfg.DeviceSNs) > 0 {
+		return cfg.DeviceSNs
+	}
+	size := cfg.SnPoolSize
+	if size <= 0 {
+		size = 1000
+	}
+	prefix := cfg.SnPrefix
+	if prefix == "" {
+		prefix = "USB-"
+	}
+	return buildSnPool(prefix, size)
 }
 
 func runLocalAuditGen(stations []*simulator.SimStation, cfg AuditGenConfig, task *auditGenTask) {
@@ -344,7 +363,7 @@ func runLocalAuditGen(stations []*simulator.SimStation, cfg AuditGenConfig, task
 		cfg.OpTypes = []string{commands.OpInsert, commands.OpRemove, commands.OpScan, commands.OpKill}
 	}
 
-	snPool := buildSnPool(cfg.SnPrefix, cfg.SnPoolSize)
+	snPool := resolveSnPool(cfg)
 
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
@@ -420,11 +439,13 @@ func runPlatformAuditGen(stations []*simulator.SimStation, cfg AuditGenConfig, t
 	client, err := db.NewOpenGaussClient(gaussCfg)
 	if err != nil {
 		zap.L().Error("openGauss connect failed", zap.Error(err))
+		task.lastError = err.Error()
 		task.errs.Add(task.total.Load())
 		finishTask(task)
 		return
 	}
 	defer client.Close()
+	zap.L().Info("openGauss connected", zap.String("host", cfg.OpenGaussHost), zap.Int("port", cfg.OpenGaussPort), zap.String("db", cfg.OpenGaussDB))
 
 	// 2. 获取已收录的 SN 列表
 	var sns []string
@@ -445,6 +466,7 @@ func runPlatformAuditGen(stations []*simulator.SimStation, cfg AuditGenConfig, t
 		sns, err = client.QueryReceivedDevices(1000) // 默认取已收录设备做轮询池
 		if err != nil {
 			zap.L().Error("query devices failed", zap.Error(err))
+			task.lastError = err.Error()
 			task.errs.Add(task.total.Load())
 			finishTask(task)
 			return
@@ -452,13 +474,19 @@ func runPlatformAuditGen(stations []*simulator.SimStation, cfg AuditGenConfig, t
 	}
 
 	if len(sns) == 0 {
-		zap.L().Error("no received devices found, please check openGauss config or input SN list")
+		msg := "no received devices found, please check openGauss config or input SN list"
+		zap.L().Error(msg)
+		task.lastError = msg
 		task.errs.Add(task.total.Load())
 		finishTask(task)
 		return
 	}
 
-	zap.L().Info("platform audit gen ready", zap.Int("deviceCount", len(sns)))
+	snsPreview := sns
+	if len(sns) > 5 {
+		snsPreview = sns[:5]
+	}
+	zap.L().Info("platform audit gen ready", zap.Int("deviceCount", len(sns)), zap.Strings("sns", snsPreview))
 
 	// 3. 发送循环：每个周期 = INSERT 新申领记录 → CMDID103 → 104 → 105
 	const tickInterval = 100 * time.Millisecond
@@ -503,6 +531,7 @@ func runPlatformAuditGen(stations []*simulator.SimStation, cfg AuditGenConfig, t
 					zap.L().Warn("insert apply record failed", zap.String("sn", sn), zap.Error(err))
 					continue
 				}
+				zap.L().Debug("insert apply record ok", zap.String("sn", sn), zap.String("code", code))
 
 				// b. CMDID103 申领码验证（只校验，写策略审计）
 				if err := commands.SendCommand(station, protocol.CmdClaimVerify, map[string]interface{}{

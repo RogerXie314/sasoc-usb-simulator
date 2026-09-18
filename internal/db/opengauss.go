@@ -7,7 +7,7 @@ import (
 	"math/big"
 	"time"
 
-	_ "github.com/lib/pq"
+	_ "gitcode.com/opengauss/openGauss-connector-go-pq"
 )
 
 // OpenGaussConfig openGauss 连接配置
@@ -41,7 +41,7 @@ func NewOpenGaussClient(cfg OpenGaussConfig) (*OpenGaussClient, error) {
 	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
 		cfg.Host, cfg.Port, cfg.Username, cfg.Password, cfg.Database)
 
-	db, err := sql.Open("postgres", dsn)
+	db, err := sql.Open("opengauss", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open gauss: %w", err)
 	}

@@ -2303,6 +2303,12 @@ const AuditGenPage = {
               <el-form-item label="SN池大小">
                 <el-input-number v-model="localForm.snPoolSize" :min="1" :max="100000" :step="100" style="width:180px" />
               </el-form-item>
+              <el-form-item label="SN列表">
+                <el-input v-model="localForm.deviceSNs" type="textarea" :rows="2" style="width:260px" placeholder="disk-16-0050&#10;disk-16-0008" />
+                <div style="margin-top:4px;font-size:12px;color:#909399;width:100%">
+                  支持换行或逗号分隔。填写后优先使用列表，否则按「SN前缀」自动生成
+                </div>
+              </el-form-item>
 
               <el-form-item>
                 <el-button type="primary" @click="startGen('local')" :disabled="localStats.running" :loading="starting==='local'">
@@ -2315,7 +2321,7 @@ const AuditGenPage = {
             </el-form>
 
             <!-- 本地统计 -->
-            <el-descriptions v-if="localStats.running || localStats.sent>0" :column="2" border size="small">
+            <el-descriptions v-if="localStats.running || localStats.sent>0 || localStats.errors>0" :column="2" border size="small">
               <el-descriptions-item label="状态">
                 <el-tag :type="localStats.running?'success':'info'" size="small" effect="dark">{{localStats.running?'生成中':'已结束'}}</el-tag>
               </el-descriptions-item>
@@ -2327,6 +2333,9 @@ const AuditGenPage = {
               <el-descriptions-item label="已运行">{{formatElapsed(localStats.elapsed)}}</el-descriptions-item>
               <el-descriptions-item label="开始时间" v-if="localStats.startTime">{{localStats.startTime}}</el-descriptions-item>
               <el-descriptions-item label="结束时间" v-if="!localStats.running && localStats.endTime">{{localStats.endTime}}</el-descriptions-item>
+              <el-descriptions-item label="错误信息" v-if="localStats.lastError" :span="2">
+                <span style="color:#f56c6c;font-size:12px">{{localStats.lastError}}</span>
+              </el-descriptions-item>
             </el-descriptions>
             <el-empty v-else description="本地模式未运行" :image-size="60" />
           </el-card>
@@ -2348,7 +2357,7 @@ const AuditGenPage = {
             </template>
 
             <!-- 运行状态 -->
-            <div v-if="platformStats.running" style="margin-bottom:16px;padding:12px;background:#f0f9eb;border-radius:6px">
+            <div v-if="platformStats.running || platformStats.sent>0" style="margin-bottom:16px;padding:12px;background:#f0f9eb;border-radius:6px">
               <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
                 <span style="font-size:13px;color:#606266">周期 {{formatNum(platformStats.sent)}} / {{formatNum(platformStats.total)}}</span>
                 <el-progress :percentage="platformProgressPercent" style="width:160px" />
@@ -2412,7 +2421,7 @@ const AuditGenPage = {
             </el-form>
 
             <!-- 平台统计 -->
-            <el-descriptions v-if="platformStats.running || platformStats.sent>0" :column="2" border size="small">
+            <el-descriptions v-if="platformStats.running || platformStats.sent>0 || platformStats.errors>0" :column="2" border size="small">
               <el-descriptions-item label="状态">
                 <el-tag :type="platformStats.running?'success':'info'" size="small" effect="dark">{{platformStats.running?'生成中':'已结束'}}</el-tag>
               </el-descriptions-item>
@@ -2426,6 +2435,9 @@ const AuditGenPage = {
               <el-descriptions-item label="已运行">{{formatElapsed(platformStats.elapsed)}}</el-descriptions-item>
               <el-descriptions-item label="开始时间" v-if="platformStats.startTime">{{platformStats.startTime}}</el-descriptions-item>
               <el-descriptions-item label="结束时间" v-if="!platformStats.running && platformStats.endTime">{{platformStats.endTime}}</el-descriptions-item>
+              <el-descriptions-item label="错误信息" v-if="platformStats.lastError" :span="2">
+                <span style="color:#f56c6c;font-size:12px">{{platformStats.lastError}}</span>
+              </el-descriptions-item>
             </el-descriptions>
             <el-empty v-else description="平台模式未运行" :image-size="60" />
           </el-card>
@@ -2533,7 +2545,11 @@ const AuditGenPage = {
       };
     },
     buildLocalPayload() {
-      return {
+      const raw = (this.localForm.deviceSNs || '').trim();
+      const sns = raw
+        ? raw.split(/[\r\n,;\s]+/).filter(s => s.trim()).map(s => s.trim())
+        : [];
+      const payload = {
         mode: 'local',
         total: this.localForm.total,
         rate: this.localForm.rate,
@@ -2542,6 +2558,10 @@ const AuditGenPage = {
         snPrefix: this.localForm.snPrefix,
         snPoolSize: this.localForm.snPoolSize,
       };
+      if (sns.length > 0) {
+        payload.deviceSNs = sns;
+      }
+      return payload;
     },
     async startGen(mode) {
       const form = mode === 'platform' ? this.platformForm : this.localForm;

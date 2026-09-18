@@ -5,6 +5,7 @@ go 1.22
 require (
 	github.com/gin-gonic/gin v1.9.1
 	github.com/gorilla/websocket v1.5.3
+	github.com/lib/pq v1.12.3
 	github.com/spf13/viper v1.18.2
 	go.uber.org/zap v1.27.0
 	modernc.org/sqlite v1.29.6

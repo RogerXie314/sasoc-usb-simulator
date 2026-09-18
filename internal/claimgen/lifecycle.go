@@ -15,17 +15,17 @@ import (
 
 // LifecycleConfig 申领码生命周期配置
 type LifecycleConfig struct {
-	PlatformURL  string         `json:"platformUrl"`
-	Token        string         `json:"token"`
-	SessionID    string         `json:"sessionId"`
-	Client       *http.Client   `json:"-"`
-	Jar          http.CookieJar `json:"-"`
-	Concurrent   int            `json:"concurrent"`
+	PlatformURL string         `json:"platformUrl"`
+	Token       string         `json:"token"`
+	SessionID   string         `json:"sessionId"`
+	Client      *http.Client   `json:"-"`
+	Jar         http.CookieJar `json:"-"`
+	Concurrent  int            `json:"concurrent"`
 	// 各状态比例（0-100）
-	ClaimedPct   int `json:"claimedPct"`   // 已申领(默认)
-	BorrowedPct  int `json:"borrowedPct"`  // 已领取
-	ReturnedPct  int `json:"returnedPct"`  // 已归还
-	ExpiredPct   int `json:"expiredPct"`   // 已超时
+	ClaimedPct  int `json:"claimedPct"`  // 已申领(默认)
+	BorrowedPct int `json:"borrowedPct"` // 已领取
+	ReturnedPct int `json:"returnedPct"` // 已归还
+	ExpiredPct  int `json:"expiredPct"`  // 已超时
 	// 输入：申领码列表
 	Codes []string `json:"codes"`
 	// 绑定到哪个安检站
@@ -77,7 +77,7 @@ func StartLifecycle(cfg LifecycleConfig) (*LifecycleTask, error) {
 		cfg.Concurrent = 5
 	}
 	if cfg.PlatformURL == "" {
-		cfg.PlatformURL = "https://192.168.123.24:8440"
+		cfg.PlatformURL = "https://192.168.123.124:8440"
 	}
 	// normalize percentages
 	total := cfg.ClaimedPct + cfg.BorrowedPct + cfg.ReturnedPct + cfg.ExpiredPct

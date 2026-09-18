@@ -80,7 +80,7 @@
 
 **fix: 申领任务未使用登录的平台地址导致全部失败**
 
-- **根因**：`startClaim()` 未设置 `PlatformURL`，`claimgen.go` 回退到默认值 `https://192.168.123.24:8440`，导致前端登录了 `.124` 但申领发向 `.24`
+- **根因**：`startClaim()` 未设置 `PlatformURL`，`claimgen.go` 回退到默认值 `https://192.168.123.124:8440`，导致前端登录了 `.124` 但申领发向错误的地址
 - **修复**：
   - `claim.go`：从登录凭证 `cred.PlatformURL` 获取平台地址传给 `StartTask()`
   - `index.html`：`startClaim` 请求增加 `platformUrl` 字段

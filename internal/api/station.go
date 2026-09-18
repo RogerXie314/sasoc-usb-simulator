@@ -48,10 +48,14 @@ type createStationRequest struct {
 // 创建安检站：如果 ID 为空，自动使用 SN 作为 ID；如果 IP/MAC 为空，自动分配
 func (sh *stationHandler) createStation(c *gin.Context) {
 	var req createStationRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := bindJSONWithAutoDecode(c, &req); err != nil {
 		responseError(c, http.StatusBadRequest, "invalid request: "+err.Error())
 		return
 	}
+	req.Name = autoDecode(req.Name)
+	req.SN = autoDecode(req.SN)
+	req.Model = autoDecode(req.Model)
+	req.Version = autoDecode(req.Version)
 
 	if req.SN == "" {
 		responseError(c, http.StatusBadRequest, "sn is required")

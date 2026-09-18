@@ -96,7 +96,7 @@ html,body,#app{height:100%;font-family:'Microsoft YaHei','PingFang SC',sans-seri
     <div class="logo">
       <span class="dot"></span>
       移动介质安检站模拟测试工具
-      <span class="app-version">V3.1.0</span>
+      <span class="app-version">V3.2.0</span>
     </div>
     <div class="header-right">
       <div class="sasoc-config" @click="showSasocDialog" title="点击修改SASOC服务器地址">
@@ -2244,7 +2244,7 @@ const AuditGenPage = {
         <template #title>
           目标平台：{{sasocTip || '读取中…'}} — 请确认是<b>独立测试实例</b>。该功能仅用于向测试平台批量写入
           U盘审计（wl_usb_audit_log）与安检站策略审计（wl_usb_strategy_audit）数据，
-          禁止指向生产平台（192.168.123.24 / 192.168.60.162）。
+          禁止指向生产平台（192.168.60.162）。
         </template>
       </el-alert>
 
@@ -2270,12 +2270,23 @@ const AuditGenPage = {
           <div class="stat-value" :class="stats.errors>0?'danger':'success'">{{stats.errors||0}}</div>
           <el-icon class="stat-icon"><CircleClose /></el-icon>
         </div>
+        <div class="stat-card" v-if="form.mode==='platform'">
+          <div class="stat-label">已领取(类型4)</div>
+          <div class="stat-value">{{formatNum(stats.claimSent)||0}}</div>
+          <el-icon class="stat-icon"><DocumentChecked /></el-icon>
+        </div>
+        <div class="stat-card" v-if="form.mode==='platform'">
+          <div class="stat-label">已归还(类型5)</div>
+          <div class="stat-value">{{formatNum(stats.returnSent)||0}}</div>
+          <el-icon class="stat-icon"><DocumentChecked /></el-icon>
+        </div>
       </div>
 
       <!-- 运行状态 -->
       <el-card v-if="stats.running" style="margin-bottom:20px" body-style="padding:16px 20px">
         <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
           <el-tag type="success" effect="dark" size="large">生成中</el-tag>
+          <el-tag v-if="stats.mode==='platform'" effect="plain" size="large">平台数据模式</el-tag>
           <span style="font-size:14px;color:#606266">开始时间: {{stats.startTime}}</span>
           <span style="font-size:14px;color:#606266">已发送: {{formatNum(stats.sent)}} / {{formatNum(stats.total)}}</span>
           <el-progress :percentage="progressPercent" style="width:220px" />
@@ -2296,34 +2307,90 @@ const AuditGenPage = {
             <span style="margin-left:12px;font-size:12px;color:#909399">0 = 全部在线站点</span>
           </el-form-item>
 
+          <el-divider content-position="left">生成方式</el-divider>
+
+          <el-form-item label="生成模式">
+            <el-radio-group v-model="form.mode" @change="onModeChange">
+              <el-radio value="local">本地SN池（CMDID107 操作日志，类型 8/9/12/13）</el-radio>
+              <el-radio value="platform">平台数据模式（CMDID103/104/105 申领-领取-归还，类型 4/5）</el-radio>
+            </el-radio-group>
+            <div style="font-size:12px;color:#909399;width:100%">
+              平台模式：工具连接 openGauss 为已收录U盘插入申领记录并模拟安检站完成「申领码验证→U盘领取→U盘归还」，
+              平台侧 wl_usb_audit_log 写入类型 4+5，wl_usb_strategy_audit 写入 3 条。
+            </div>
+          </el-form-item>
+
           <el-divider content-position="left">数据规模</el-divider>
 
           <el-form-item label="目标总条数">
             <el-input-number v-model="form.total" :min="1" :max="5000000" :step="10000" style="width:200px" />
-            <span style="margin-left:12px;font-size:12px;color:#909399">对应平台规格 100 万条（U盘审计+策略审计各写入 N 条）</span>
+            <span style="margin-left:12px;font-size:12px;color:#909399">
+              {{form.mode==='platform' ? '一个完整周期（申领-领取-归还）计 1 条，平台侧类型4与类型5各写入 1 条' : '对应平台规格 100 万条（U盘审计+策略审计各写入 N 条）'}}
+            </span>
           </el-form-item>
           <el-form-item label="生成速率(条/秒)">
             <el-input-number v-model="form.rate" :min="1" :max="10000" :step="100" style="width:200px" />
             <span style="margin-left:12px;font-size:12px;color:#909399">默认 1000，上限 10000；建议按平台处理能力调低</span>
           </el-form-item>
 
-          <el-divider content-position="left">数据内容</el-divider>
+          <!-- 本地模式配置 -->
+          <template v-if="form.mode==='local'">
+            <el-divider content-position="left">数据内容</el-divider>
 
-          <el-form-item label="操作类型">
-            <el-checkbox-group v-model="form.opTypes">
-              <el-checkbox v-for="opt in opOptions" :key="opt.value" :value="opt.value" :label="opt.value">
-                {{opt.label}} [auditType {{opt.auditType}}]
-              </el-checkbox>
-            </el-checkbox-group>
-            <div style="font-size:12px;color:#909399;width:100%">平台对每条上报各写一条 U盘审计 + 一条安检站策略审计</div>
-          </el-form-item>
-          <el-form-item label="SN前缀">
-            <el-input v-model="form.snPrefix" style="width:200px" placeholder="USB-" />
-          </el-form-item>
-          <el-form-item label="SN池大小">
-            <el-input-number v-model="form.snPoolSize" :min="1" :max="100000" :step="100" style="width:200px" />
-            <span style="margin-left:12px;font-size:12px;color:#909399">SN 池内循环使用，贴近真实多 U 盘场景</span>
-          </el-form-item>
+            <el-form-item label="操作类型">
+              <el-checkbox-group v-model="form.opTypes">
+                <el-checkbox v-for="opt in opOptions" :key="opt.value" :value="opt.value" :label="opt.value">
+                  {{opt.label}} [auditType {{opt.auditType}}]
+                </el-checkbox>
+              </el-checkbox-group>
+              <div style="font-size:12px;color:#909399;width:100%">平台对每条上报各写一条 U盘审计 + 一条安检站策略审计</div>
+            </el-form-item>
+            <el-form-item label="SN前缀">
+              <el-input v-model="form.snPrefix" style="width:200px" placeholder="USB-" />
+            </el-form-item>
+            <el-form-item label="SN池大小">
+              <el-input-number v-model="form.snPoolSize" :min="1" :max="100000" :step="100" style="width:200px" />
+              <span style="margin-left:12px;font-size:12px;color:#909399">SN 池内循环使用，贴近真实多 U 盘场景</span>
+            </el-form-item>
+          </template>
+
+          <!-- 平台数据模式配置 -->
+          <template v-else>
+            <el-divider content-position="left">openGauss 连接（测试平台数据库）</el-divider>
+
+            <el-form-item label="数据库地址">
+              <el-input v-model="form.gaussHost" style="width:280px" placeholder="192.168.123.124" />
+            </el-form-item>
+            <el-form-item label="端口">
+              <el-input-number v-model="form.gaussPort" :min="1" :max="65535" style="width:200px" />
+            </el-form-item>
+            <el-form-item label="数据库名">
+              <el-input v-model="form.gaussDb" style="width:200px" placeholder="wnt" />
+            </el-form-item>
+            <el-form-item label="Schema">
+              <el-input v-model="form.gaussSchema" style="width:200px" placeholder="soc" />
+            </el-form-item>
+            <el-form-item label="用户名">
+              <el-input v-model="form.gaussUser" style="width:200px" placeholder="soc" autocomplete="off" />
+            </el-form-item>
+            <el-form-item label="密码">
+              <el-input v-model="form.gaussPass" type="password" show-password style="width:200px" autocomplete="new-password" />
+            </el-form-item>
+
+            <el-divider content-position="left">U 盘 SN 来源</el-divider>
+
+            <el-form-item label="SN 列表">
+              <el-input
+                v-model="form.deviceSNs"
+                type="textarea" :rows="4"
+                style="width:100%"
+                placeholder="每行一个 SN，仅使用已收录（status=3）的 U 盘。留空则自动从平台查询已收录 U 盘。"
+              />
+              <div style="font-size:12px;color:#909399;width:100%">
+                建议先手动录入并收录若干个测试 U 盘，再将 SN 填入此处；多个 SN 轮询循环使用。
+              </div>
+            </el-form-item>
+          </template>
 
           <el-form-item>
             <el-button type="primary" size="large" @click="startGen" :disabled="stats.running" :loading="starting">
@@ -2347,6 +2414,8 @@ const AuditGenPage = {
           <el-descriptions-item label="已发送">
             <span style="font-size:18px;font-weight:700;color:#409eff">{{formatNum(stats.sent)||0}}</span>
           </el-descriptions-item>
+          <el-descriptions-item v-if="stats.mode==='platform'" label="已领取(类型4)">{{formatNum(stats.claimSent)||0}}</el-descriptions-item>
+          <el-descriptions-item v-if="stats.mode==='platform'" label="已归还(类型5)">{{formatNum(stats.returnSent)||0}}</el-descriptions-item>
           <el-descriptions-item label="发送错误">
             <span style="font-size:18px;font-weight:700" :class="stats.errors>0?'danger-text':''">{{stats.errors||0}}</span>
           </el-descriptions-item>
@@ -2367,12 +2436,20 @@ const AuditGenPage = {
       statsTimer: null,
       sasocTip: '',
       form: {
+        mode: 'local',
         total: 1000000,
         rate: 1000,
         stationCount: 0,
         opTypes: ['insert', 'remove', 'scan', 'kill'],
         snPrefix: 'USB-',
         snPoolSize: 1000,
+        gaussHost: '',
+        gaussPort: 5432,
+        gaussDb: 'wnt',
+        gaussSchema: 'soc',
+        gaussUser: '',
+        gaussPass: '',
+        deviceSNs: '',
       },
       opOptions: [
         { label: '插入U盘', value: 'insert', auditType: 8 },
@@ -2416,35 +2493,84 @@ const AuditGenPage = {
     async loadStats() {
       try {
         const r = await apiGet('/auditgen/stats');
-        if (r) this.stats = r;
+        if (r) {
+          this.stats = r;
+          if (r.mode) this.form.mode = r.mode;
+        }
       } catch {}
+    },
+    onModeChange() {
+      this.stats = {};
+      this.loadStats();
+    },
+    buildPlatformPayload() {
+      const sns = this.form.deviceSNs
+        .split(/[\r\n,;\s]+/)
+        .map(s => s.trim())
+        .filter(Boolean);
+      return {
+        mode: 'platform',
+        total: this.form.total,
+        rate: this.form.rate,
+        stationCount: this.form.stationCount,
+        openGaussHost: this.form.gaussHost.trim(),
+        openGaussPort: this.form.gaussPort,
+        openGaussDB: this.form.gaussDb.trim(),
+        openGaussSchema: this.form.gaussSchema.trim(),
+        openGaussUser: this.form.gaussUser.trim(),
+        openGaussPassword: this.form.gaussPass,
+        deviceSNs: sns,
+      };
     },
     async startGen() {
       if (this.form.total < 1) {
         ElementPlus.ElMessage.warning('目标条数必须大于 0');
         return;
       }
-      if (this.form.opTypes.length === 0) {
-        ElementPlus.ElMessage.warning('请至少选择一种操作类型');
-        return;
-      }
       if (this.onlineCount === 0) {
         ElementPlus.ElMessage.warning('没有在线站点，请先在安检站管理页面启动站点');
         return;
       }
+      if (this.form.mode === 'local' && this.form.opTypes.length === 0) {
+        ElementPlus.ElMessage.warning('请至少选择一种操作类型');
+        return;
+      }
+      if (this.form.mode === 'platform') {
+        if (!this.form.gaussHost.trim()) {
+          ElementPlus.ElMessage.warning('请填写 openGauss 数据库地址');
+          return;
+        }
+        if (!this.form.gaussUser.trim()) {
+          ElementPlus.ElMessage.warning('请填写 openGauss 用户名');
+          return;
+        }
+        if (!this.form.gaussPass) {
+          ElementPlus.ElMessage.warning('请填写 openGauss 密码');
+          return;
+        }
+      }
       try {
+        const msg = this.form.mode === 'platform'
+          ? `确认开始生成 ${this.form.total.toLocaleString()} 个申领-领取-归还周期？\n\n` +
+            `目标平台：${this.sasocTip || '（当前配置）'}\n` +
+            `openGauss：${this.form.gaussHost.trim()}:${this.form.gaussPort}/${this.form.gaussDb.trim()}\n` +
+            `请确认这是独立的【测试实例】，而非生产平台（192.168.60.162）。\n\n` +
+            `每个周期平台侧：U盘审计类型4+类型5 各 +1，安检站策略审计 +3。\n` +
+            `工具会自动为已收录U盘插入申领记录（wl_usb_apply）并模拟「申领码验证→领取→归还」。`
+          : `确认开始生成 ${this.form.total.toLocaleString()} 条操作日志？\n\n` +
+            `目标平台：${this.sasocTip || '（当前配置）'}\n` +
+            `请确认这是独立的【测试实例】，而非生产平台（192.168.60.162）。\n\n` +
+            `生成后，平台侧的 U盘审计与安检站策略审计将各增加相同条数。`;
         await ElementPlus.ElMessageBox.confirm(
-          `确认开始生成 ${this.form.total.toLocaleString()} 条操作日志？\n\n` +
-          `目标平台：${this.sasocTip || '（当前配置）'}\n` +
-          `请确认这是独立的【测试实例】，而非生产平台（192.168.123.24 / 192.168.60.162）。\n\n` +
-          `生成后，平台侧的 U盘审计与安检站策略审计将各增加相同条数。`,
+          msg,
           '审计数据生成确认', { type: 'warning', confirmButtonText: '确认生成' }
         );
       } catch { return; }
 
       this.starting = true;
       try {
-        const r = await apiPost('/auditgen/start', this.form);
+        const payload = this.form.mode === 'platform' ? this.buildPlatformPayload() : this.form;
+        const r = await apiPost('/auditgen/start', payload);
         ElementPlus.ElMessage.success(`已启动，目标 ${r.total} 条，使用 ${r.stationCount} 个站点`);
         this.loadStats();
       } catch (e) {
@@ -2590,7 +2716,7 @@ const ClaimPage = {
   data() {
     return {      stats: { status: 'none', taskId: '', total: 0, success: 0, failed: 0, rate: 0, elapsed: 0 },
       loginForm: {
-        platformUrl: localStorage.getItem('claimPlatformUrl') || 'https://192.168.123.24:8440',
+        platformUrl: localStorage.getItem('claimPlatformUrl') || 'https://192.168.123.124:8440',
         username: '',
         password: '',
       },

@@ -103,7 +103,7 @@ func StartTask(cfg Config, db *sql.DB) (*Task, error) {
 		cfg.Concurrent = 20
 	}
 	if cfg.PlatformURL == "" {
-		cfg.PlatformURL = "https://192.168.123.24:8440"
+		cfg.PlatformURL = "https://192.168.123.124:8440"
 	}
 	task := &Task{
 		ID:        fmt.Sprintf("claim-%d", time.Now().UnixMilli()),
